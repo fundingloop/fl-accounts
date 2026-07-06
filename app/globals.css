@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --navy: #012E41;
+  --teal: #2BA99F;
+}
+
+html, body {
+  padding: 0;
+  margin: 0;
+  font-family: "Poppins", system-ui, -apple-system, sans-serif;
+  background: #f6f8f9;
+  color: #0f2733;
+}
+
+* {
+  box-sizing: border-box;
+}
