@@ -27,7 +27,13 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!account?.id) return;
+    if (!account?.id) {
+      // No account resolved (still loading, or genuinely none) - clear our own
+      // loading flag so the page never gets stuck on "Loading..." waiting for a
+      // fetch that will not run.
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     const supabase = createClient();
@@ -76,8 +82,12 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {(accountLoading || loading) && !account ? (
+      {accountLoading ? (
         <div style={{ color: "#6b7c85", fontSize: 14 }}>Loading...</div>
+      ) : !account ? (
+        <div style={{ background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,.06)", color: "#6b7c85", fontSize: 13.5 }}>
+          No float account found. {accountError ? "" : "Run the fl-accounts migration and reload."}
+        </div>
       ) : (
         <>
           {/* Hero */}
