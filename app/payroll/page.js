@@ -6,7 +6,7 @@ import AppShell from "@/components/AppShell";
 import { createClient } from "@/lib/supabase-browser";
 import { useFloatAccount } from "@/lib/useFloatAccount";
 import { formatCurrency } from "@/lib/format";
-import { computePayroll, payrollTotals, EMPLOYEE_SSF_RATE, EMPLOYER_SSF_RATE } from "@/lib/payroll";
+import { computePayroll, payrollTotals, EMPLOYER_SSF_RATE, TOTAL_SSF_RATE } from "@/lib/payroll";
 
 const emptyForm = {
   employee_name: "",
@@ -14,8 +14,25 @@ const emptyForm = {
   designation: "",
   basic_salary: "",
   dearness_allowance: "",
-  other_deductions: "",
+  commission: "",
+  leave_encashment: "",
+  ssf_salary_advance: "",
+  deduction_pf: "",
+  sst: "",
+  tds: "",
 };
+
+// Number fields that map straight to a payroll_employees column.
+const NUM_FIELDS = [
+  "basic_salary",
+  "dearness_allowance",
+  "commission",
+  "leave_encashment",
+  "ssf_salary_advance",
+  "deduction_pf",
+  "sst",
+  "tds",
+];
 
 export default function PayrollPage() {
   const { account, loading: accountLoading } = useFloatAccount();
@@ -53,14 +70,9 @@ export default function PayrollPage() {
   const openAdd = () => { setEditingId(null); setForm(emptyForm); setFormOpen(true); };
   const openEdit = (r) => {
     setEditingId(r.id);
-    setForm({
-      employee_name: r.employee_name || "",
-      branch: r.branch || "",
-      designation: r.designation || "",
-      basic_salary: r.basic_salary != null ? String(r.basic_salary) : "",
-      dearness_allowance: r.dearness_allowance != null ? String(r.dearness_allowance) : "",
-      other_deductions: r.other_deductions != null ? String(r.other_deductions) : "",
-    });
+    const f = { employee_name: r.employee_name || "", branch: r.branch || "", designation: r.designation || "" };
+    for (const k of NUM_FIELDS) f[k] = r[k] != null ? String(r[k]) : "";
+    setForm(f);
     setFormOpen(true);
   };
   const closeForm = () => { setFormOpen(false); setEditingId(null); setForm(emptyForm); };
@@ -75,10 +87,8 @@ export default function PayrollPage() {
       employee_name: form.employee_name.trim(),
       branch: form.branch.trim() || null,
       designation: form.designation.trim() || null,
-      basic_salary: Number(form.basic_salary) || 0,
-      dearness_allowance: Number(form.dearness_allowance) || 0,
-      other_deductions: Number(form.other_deductions) || 0,
     };
+    for (const k of NUM_FIELDS) payload[k] = Number(form[k]) || 0;
     if (editingId) {
       const { error: err } = await supabase.from("payroll_employees").update(payload).eq("id", editingId);
       if (err) setError(err.message);
@@ -110,7 +120,7 @@ export default function PayrollPage() {
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 700, color: "#012E41", margin: 0 }}>Payroll</h1>
           <p style={{ fontSize: 13, color: "#6b7c85", margin: "4px 0 0" }}>
-            Nepal salary register - SSF employee {Math.round(EMPLOYEE_SSF_RATE * 100)}% / employer {Math.round(EMPLOYER_SSF_RATE * 100)}% of basic + dearness allowance
+            Nepal salary register - SSF contribution {Math.round(EMPLOYER_SSF_RATE * 100)}% added to income, {Math.round(TOTAL_SSF_RATE * 100)}% deducted (CIT / SSF), both on basic salary
           </p>
         </div>
         <button onClick={openAdd} style={{ display: "flex", alignItems: "center", gap: 6, background: "#2BA99F", color: "#fff", border: "none", borderRadius: 8, padding: "10px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
@@ -125,7 +135,7 @@ export default function PayrollPage() {
         </div>
       )}
 
-      {/* Add/edit form with a live calculation preview */}
+      {/* Add/edit form with a live payslip preview */}
       {formOpen && (
         <form onSubmit={submitForm} style={{ background: "#fff", borderRadius: 12, padding: 20, margin: "16px 0 20px", boxShadow: "0 1px 3px rgba(0,0,0,.06)" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
@@ -133,7 +143,7 @@ export default function PayrollPage() {
             <button type="button" onClick={closeForm} style={{ background: "none", border: "none", cursor: "pointer", color: "#8a99a0" }}><X size={16} /></button>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 14 }}>
             <Field label="Employee" required>
               <input required value={form.employee_name} onChange={(e) => setForm({ ...form, employee_name: e.target.value })} style={inputStyle} />
             </Field>
@@ -143,24 +153,36 @@ export default function PayrollPage() {
             <Field label="Designation">
               <input value={form.designation} onChange={(e) => setForm({ ...form, designation: e.target.value })} style={inputStyle} />
             </Field>
-            <Field label={`Basic salary (${currency})`} required>
-              <input required type="number" step="0.01" min="0" value={form.basic_salary} onChange={(e) => setForm({ ...form, basic_salary: e.target.value })} style={inputStyle} />
-            </Field>
-            <Field label={`Dearness allowance (${currency})`}>
-              <input type="number" step="0.01" min="0" value={form.dearness_allowance} onChange={(e) => setForm({ ...form, dearness_allowance: e.target.value })} style={inputStyle} />
-            </Field>
-            <Field label={`Other deductions (${currency})`}>
-              <input type="number" step="0.01" min="0" value={form.other_deductions} onChange={(e) => setForm({ ...form, other_deductions: e.target.value })} style={inputStyle} />
-            </Field>
+            <NumField label={`Basic salary (${currency})`} required value={form.basic_salary} onChange={(v) => setForm({ ...form, basic_salary: v })} />
+            <NumField label={`Dearness allowance (${currency})`} value={form.dearness_allowance} onChange={(v) => setForm({ ...form, dearness_allowance: v })} />
+            <NumField label={`Commission (${currency})`} value={form.commission} onChange={(v) => setForm({ ...form, commission: v })} />
+            <NumField label={`Leave encashment (${currency})`} value={form.leave_encashment} onChange={(v) => setForm({ ...form, leave_encashment: v })} />
+            <NumField label={`SSF salary advance (${currency})`} value={form.ssf_salary_advance} onChange={(v) => setForm({ ...form, ssf_salary_advance: v })} />
+            <NumField label={`Deduction / PF (${currency})`} value={form.deduction_pf} onChange={(v) => setForm({ ...form, deduction_pf: v })} />
+            <NumField label={`SST (${currency})`} value={form.sst} onChange={(v) => setForm({ ...form, sst: v })} />
+            <NumField label={`TDS (${currency})`} value={form.tds} onChange={(v) => setForm({ ...form, tds: v })} />
           </div>
 
-          {/* Live preview */}
-          <div style={{ marginTop: 16, background: "#f6f8f9", borderRadius: 10, padding: "12px 16px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12 }}>
-            <Stat label="Gross income" value={formatCurrency(preview.gross, currency)} />
-            <Stat label={`Employer SSF (${Math.round(EMPLOYER_SSF_RATE * 100)}%)`} value={formatCurrency(preview.employerSsf, currency)} sub="company cost" />
-            <Stat label={`SSF deduction (${Math.round(EMPLOYEE_SSF_RATE * 100)}%)`} value={formatCurrency(preview.employeeSsf, currency)} />
-            <Stat label="Total deduction" value={formatCurrency(preview.totalDeduction, currency)} />
-            <Stat label="Net salary" value={formatCurrency(preview.net, currency)} strong />
+          {/* Live payslip preview - income vs deductions, mirroring Rigo */}
+          <div style={{ marginTop: 18, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
+            <PayslipColumn title="Income" accent="#1E8B82" rows={[
+              ["Basic salary", preview.basic],
+              ["Dearness allowance", preview.da],
+              ["Commission", preview.commission],
+              [`SSF contribution (${Math.round(EMPLOYER_SSF_RATE * 100)}%)`, preview.ssfContribution],
+              ["Leave encashment", preview.leaveEncashment],
+            ]} total={["Gross income", preview.gross]} currency={currency} />
+            <PayslipColumn title="Deductions" accent="#B45309" rows={[
+              ["SSF salary advance", preview.ssfSalaryAdvance],
+              ["Deduction (PF)", preview.deductionPf],
+              [`CIT / SSF deduction (${Math.round(TOTAL_SSF_RATE * 100)}%)`, preview.citSsf],
+              ["SST", preview.sst],
+              ["TDS", preview.tds],
+            ]} total={["Total deduction", preview.totalDeduction]} currency={currency} />
+          </div>
+          <div style={{ marginTop: 12, background: "#012E41", borderRadius: 10, padding: "12px 18px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ fontSize: 12.5, fontWeight: 600, color: "#9fd7d0", textTransform: "uppercase", letterSpacing: ".04em" }}>Net salary</span>
+            <span style={{ fontSize: 20, fontWeight: 800, color: "#fff" }}>{formatCurrency(preview.net, currency)}</span>
           </div>
 
           <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
@@ -180,18 +202,23 @@ export default function PayrollPage() {
           <div style={{ padding: 24, color: "#8a99a0", fontSize: 13.5 }}>No employees yet. Add one to build the register.</div>
         ) : (
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, whiteSpace: "nowrap" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, whiteSpace: "nowrap" }}>
               <thead>
                 <tr style={{ background: "#f6f8f9", textAlign: "left" }}>
                   <Th>Employee</Th>
                   <Th>Branch</Th>
                   <Th align="right">Basic</Th>
                   <Th align="right">Dearness</Th>
+                  <Th align="right">Commission</Th>
+                  <Th align="right">SSF contrib.</Th>
+                  <Th align="right">Leave enc.</Th>
                   <Th align="right">Gross</Th>
-                  <Th align="right">Employer SSF</Th>
-                  <Th align="right">SSF deduction</Th>
-                  <Th align="right">Other deduction</Th>
-                  <Th align="right">Total deduction</Th>
+                  <Th align="right">SSF advance</Th>
+                  <Th align="right">PF</Th>
+                  <Th align="right">CIT / SSF</Th>
+                  <Th align="right">SST</Th>
+                  <Th align="right">TDS</Th>
+                  <Th align="right">Total ded.</Th>
                   <Th align="right">Net salary</Th>
                   <Th align="right">Actions</Th>
                 </tr>
@@ -209,10 +236,15 @@ export default function PayrollPage() {
                       <Td>{r.branch || "-"}</Td>
                       <Td align="right">{formatCurrency(c.basic, currency)}</Td>
                       <Td align="right">{formatCurrency(c.da, currency)}</Td>
+                      <Td align="right">{formatCurrency(c.commission, currency)}</Td>
+                      <Td align="right" style={{ color: "#6b7c85" }}>{formatCurrency(c.ssfContribution, currency)}</Td>
+                      <Td align="right">{formatCurrency(c.leaveEncashment, currency)}</Td>
                       <Td align="right" style={{ fontWeight: 600 }}>{formatCurrency(c.gross, currency)}</Td>
-                      <Td align="right" style={{ color: "#6b7c85" }}>{formatCurrency(c.employerSsf, currency)}</Td>
-                      <Td align="right">{formatCurrency(c.employeeSsf, currency)}</Td>
-                      <Td align="right">{formatCurrency(c.other, currency)}</Td>
+                      <Td align="right">{formatCurrency(c.ssfSalaryAdvance, currency)}</Td>
+                      <Td align="right">{formatCurrency(c.deductionPf, currency)}</Td>
+                      <Td align="right">{formatCurrency(c.citSsf, currency)}</Td>
+                      <Td align="right">{formatCurrency(c.sst, currency)}</Td>
+                      <Td align="right">{formatCurrency(c.tds, currency)}</Td>
                       <Td align="right">{formatCurrency(c.totalDeduction, currency)}</Td>
                       <Td align="right" style={{ fontWeight: 700, color: "#1E8B82" }}>{formatCurrency(c.net, currency)}</Td>
                       <Td align="right">
@@ -231,10 +263,15 @@ export default function PayrollPage() {
                   <Td />
                   <Td align="right" style={{ fontWeight: 700 }}>{formatCurrency(totals.basic, currency)}</Td>
                   <Td align="right" style={{ fontWeight: 700 }}>{formatCurrency(totals.da, currency)}</Td>
+                  <Td align="right" style={{ fontWeight: 700 }}>{formatCurrency(totals.commission, currency)}</Td>
+                  <Td align="right" style={{ fontWeight: 700, color: "#6b7c85" }}>{formatCurrency(totals.ssfContribution, currency)}</Td>
+                  <Td align="right" style={{ fontWeight: 700 }}>{formatCurrency(totals.leaveEncashment, currency)}</Td>
                   <Td align="right" style={{ fontWeight: 700 }}>{formatCurrency(totals.gross, currency)}</Td>
-                  <Td align="right" style={{ fontWeight: 700, color: "#6b7c85" }}>{formatCurrency(totals.employerSsf, currency)}</Td>
-                  <Td align="right" style={{ fontWeight: 700 }}>{formatCurrency(totals.employeeSsf, currency)}</Td>
-                  <Td align="right" style={{ fontWeight: 700 }}>{formatCurrency(totals.other, currency)}</Td>
+                  <Td align="right" style={{ fontWeight: 700 }}>{formatCurrency(totals.ssfSalaryAdvance, currency)}</Td>
+                  <Td align="right" style={{ fontWeight: 700 }}>{formatCurrency(totals.deductionPf, currency)}</Td>
+                  <Td align="right" style={{ fontWeight: 700 }}>{formatCurrency(totals.citSsf, currency)}</Td>
+                  <Td align="right" style={{ fontWeight: 700 }}>{formatCurrency(totals.sst, currency)}</Td>
+                  <Td align="right" style={{ fontWeight: 700 }}>{formatCurrency(totals.tds, currency)}</Td>
                   <Td align="right" style={{ fontWeight: 700 }}>{formatCurrency(totals.totalDeduction, currency)}</Td>
                   <Td align="right" style={{ fontWeight: 700, color: "#1E8B82" }}>{formatCurrency(totals.net, currency)}</Td>
                   <Td />
@@ -247,7 +284,7 @@ export default function PayrollPage() {
 
       {rows.length > 0 && (
         <div style={{ marginTop: 12, fontSize: 12.5, color: "#6b7c85" }}>
-          Total cost to company (net + all SSF): <strong style={{ color: "#012E41" }}>{formatCurrency(totals.costToCompany, currency)}</strong> per period.
+          Total cost to company (gross incl. employer SSF): <strong style={{ color: "#012E41" }}>{formatCurrency(totals.costToCompany, currency)}</strong> per period.
         </div>
       )}
     </AppShell>
@@ -265,25 +302,41 @@ function Field({ label, required, children }) {
   );
 }
 
-function Stat({ label, value, sub, strong }) {
+function NumField({ label, required, value, onChange }) {
   return (
-    <div>
-      <div style={{ fontSize: 11, color: "#6b7c85", fontWeight: 600 }}>{label}</div>
-      <div style={{ fontSize: strong ? 16 : 14, fontWeight: 700, color: strong ? "#1E8B82" : "#012E41", marginTop: 2 }}>{value}</div>
-      {sub && <div style={{ fontSize: 10, color: "#a3b0b5" }}>{sub}</div>}
+    <Field label={label} required={required}>
+      <input required={required} type="number" step="0.01" min="0" value={value} onChange={(e) => onChange(e.target.value)} style={inputStyle} />
+    </Field>
+  );
+}
+
+function PayslipColumn({ title, accent, rows, total, currency }) {
+  return (
+    <div style={{ background: "#f6f8f9", borderRadius: 10, padding: "12px 16px" }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: accent, textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 8 }}>{title}</div>
+      {rows.map(([label, value]) => (
+        <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontSize: 12.5, color: "#48595a" }}>
+          <span>{label}</span>
+          <span style={{ fontVariantNumeric: "tabular-nums", color: "#334" }}>{formatCurrency(value, currency)}</span>
+        </div>
+      ))}
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, paddingTop: 8, borderTop: "1px solid #e0e6e8", fontSize: 13, fontWeight: 700, color: "#012E41" }}>
+        <span>{total[0]}</span>
+        <span style={{ fontVariantNumeric: "tabular-nums" }}>{formatCurrency(total[1], currency)}</span>
+      </div>
     </div>
   );
 }
 
 function Th({ children, align }) {
   return (
-    <th style={{ padding: "10px 14px", fontSize: 11.5, fontWeight: 700, color: "#6b7c85", textTransform: "uppercase", letterSpacing: ".03em", textAlign: align || "left" }}>{children}</th>
+    <th style={{ padding: "10px 12px", fontSize: 11, fontWeight: 700, color: "#6b7c85", textTransform: "uppercase", letterSpacing: ".03em", textAlign: align || "left" }}>{children}</th>
   );
 }
 
 function Td({ children, align, style }) {
   return (
-    <td style={{ padding: "12px 14px", textAlign: align || "left", color: "#334", ...style }}>{children}</td>
+    <td style={{ padding: "11px 12px", textAlign: align || "left", color: "#334", ...style }}>{children}</td>
   );
 }
 
