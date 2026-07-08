@@ -1,8 +1,9 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "FL Accounts",
+  title: "Accounts - Funding Loop",
   description: "Funding Loop - Nepal accounts and cashflow",
+  icons: { icon: "https://fundingloop.com.au/wp-content/uploads/2025/05/Funding-Loop-Favicon.png" },
 };
 
 export default function RootLayout({ children }) {
