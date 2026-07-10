@@ -21,8 +21,8 @@ accepted debt in [TECH_DEBT.md](TECH_DEBT.md).
 - **Storage**: private `account-invoices` bucket, zero client policies.
   Upload/download/delete flow only through server routes that re-check role
   and bill ownership before using the service-role key.
-- **Cross-app payroll boundary** (2026-07-11, migration authored, not yet
-  applied): fl-people owns the Nepal payroll system-of-record
+- **Cross-app payroll boundary** (2026-07-11, migrations applied the same
+  day): fl-people owns the Nepal payroll system-of-record
   (`hr_payroll_runs`/`hr_payroll_items`); fl-accounts holds
   `payroll_run_snapshots`, an append-only finance mirror of finalised runs
   only. No client insert/update/delete path exists - the only writer is the
@@ -64,7 +64,7 @@ action required.
 | M6 | Raw Supabase/storage error messages returned to clients from API routes (internal detail leakage). | Fixed - server routes log the real error and return generic messages. |
 | M7 | No security response headers; X-Powered-By advertised. | Fixed - nosniff, X-Frame-Options DENY, Referrer-Policy, HSTS, Permissions-Policy via next.config; poweredByHeader off. |
 | M8 | Currency change on the float account silently relabels all historical amounts (no conversion). | Mitigated - explicit confirmation dialog spelling out the consequence. Real fix (FX-aware model) is Phase-2 architecture. |
-| M9 | Payroll run history and payroll-in-forecast are built and unit-tested but not live: `payroll_run_snapshots` and its two RPCs do not exist in production until the migrations are applied. | **Manual action required: apply `20260711150000_hr_payroll_foundation.sql` then `20260711160000_payroll_run_snapshots.sql`** (fl-crm ledger, apply order matters - the second has a foreign key to the first's `hr_payroll_runs`), run each migration's post-apply verification, then confirm live at accounts.fundingloop.au that the payroll history section syncs and the dashboard note flips to "Includes payroll from finalised runs...". Until applied, the app degrades gracefully (amber banner on /payroll, "not included" note on the dashboard); the register is unaffected either way. |
+| M9 | Payroll run history and payroll-in-forecast are built and unit-tested; the migrations that make them live have now been applied. | **Fixed at schema/app level - applied 2026-07-11.** `20260711150000_hr_payroll_foundation.sql` then `20260711160000_payroll_run_snapshots.sql` (fl-crm ledger, apply order mattered - the second has a foreign key to the first's `hr_payroll_runs`) were applied to the production Supabase project in that order, and each migration's post-apply verification block passed. `payroll_run_snapshots` and its two RPCs are live. **Manual action remaining: live verification checklist at accounts.fundingloop.au** - finalise a supervised run in fl-people and confirm: first sync captures each finalised run once, second sync captures zero, totals match fl-people, no employee-level data is visible, non-accounts users are rejected by both RPCs, UPDATE/DELETE are rejected, and the capture lands in `fl_accounts_audit_log`. (The graceful-degradation path - amber banner on /payroll, "not included" note on the dashboard - remains in the code as a resilience guard if the schema were ever missing, but is not the current state.) |
 
 ### Low
 
@@ -87,6 +87,7 @@ action required.
 | I3 | No rate limiting on the app's own API routes (upload/download/delete). All are authenticated-and-role-gated; Supabase applies its own limits to auth endpoints (login/MFA). In-memory limiting is ineffective on serverless. | Documented - revisit if routes multiply (TECH_DEBT). |
 | I4 | CSRF: state-changing routes are cookie-authenticated; Supabase SSR cookies are SameSite=Lax, which blocks cross-site POSTs; download is a GET but read-only per-request. | No action needed; noted for future route authors: keep state changes on POST. |
 | I5 | Shared Supabase project = shared blast radius with the CRM and portals. | Documented - isolation criteria in ARCHITECTURE_RECOMMENDATIONS. |
+| I6 | The file headers of `20260711150000_hr_payroll_foundation.sql` and `20260711160000_payroll_run_snapshots.sql` (fl-crm ledger) still read "NOT YET APPLIED" - now historical. Applied migrations are immutable (see I2, TECH_DEBT D10), so the header text is not updated after the fact; applied status is recorded here and in ROADMAP.md instead. | Documented. Both migrations were applied to production 2026-07-11 (see M9). |
 
 ## Standing rules for contributors
 

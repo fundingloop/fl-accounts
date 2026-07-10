@@ -37,7 +37,7 @@ capabilities cannot be bolted on without schema evolution.
 | Multiple legal entities | Not supported | No entity concept at all. `float_accounts.name` is the closest thing. Adding rows "works" but every page hardcodes the first account (`useFloatAccount` takes the oldest row). |
 | Multiple bank accounts | Partial (schema), No (app) | `account_id` is threaded through every table (good foresight), but the UI resolves exactly one account and has no switcher. |
 | Multiple currencies | Not safe | One currency label per account; changing it relabels history with no conversion (UI now warns). No FX rates, no per-transaction currency, no reporting currency. |
-| Payroll history / periods | Partial | Under the 2026-07-11 split-ownership decision, fl-people owns payroll runs and per-employee payslip history (`hr_payroll_runs`/`hr_payroll_items`). fl-accounts holds an immutable finance mirror of each finalised run's totals (`payroll_run_snapshots` - period, SSF/TDS, net, pending migration apply); the `payroll_employees` register remains current-state only and is now explicitly a reference/estimate tool, not history. |
+| Payroll history / periods | Partial | Under the 2026-07-11 split-ownership decision, fl-people owns payroll runs and per-employee payslip history (`hr_payroll_runs`/`hr_payroll_items`). fl-accounts holds an immutable finance mirror of each finalised run's totals (`payroll_run_snapshots` - period, SSF/TDS, net; applied to production 2026-07-11, live end-to-end verification outstanding); the `payroll_employees` register remains current-state only and is now explicitly a reference/estimate tool, not history. |
 | Recurring payroll | Partial | Finalised payroll now projects into the cashflow forecast (`lib/payrollForecast.js`): known SSF/TDS remittances and not-yet-paid net wages from real snapshots, plus estimated future months extrapolated from the latest run. Still absent: an fl-accounts-side payroll run of record (superseded by design, not a gap - see ROADMAP). |
 | Recurring expenses | Partial | Recurring bills project occurrences client-side, but with a single `paid` flag there is no per-occurrence payment history; marking the anchor paid just advances the projection. |
 | Recurring revenue | Not supported | No revenue tables. Deposits are untyped inflows. |
@@ -88,8 +88,10 @@ capabilities cannot be bolted on without schema evolution.
    mirrors finalised totals via `payroll_run_snapshots` and feeds the
    forecast from that mirror (`lib/payrollForecast.js`). Same outcome
    (payroll history exists, SSF/TDS liabilities and payroll reach the
-   forecast), no duplicate system of record. Pending: applying the two
-   migrations to production.
+   forecast), no duplicate system of record. The two migrations were applied
+   to production 2026-07-11 (post-apply verification passed for both);
+   pending: live end-to-end verification at accounts.fundingloop.au (see
+   SECURITY.md M9).
 3. Move financial writes behind server routes (or Postgres RPCs) so
    validation, audit context and multi-step ordering are enforced server-side.
    The July 2026 remediation started this with bill deletion.

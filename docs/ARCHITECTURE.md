@@ -20,7 +20,10 @@ future/target design is deliberately kept separate in
   that gate on `is_accounts_app_user()` and expose only finalised-run headers
   - no per-employee hr data ever crosses into this app. See the split-ownership
   decision in ROADMAP.md. Migration `20260711160000_payroll_run_snapshots.sql`
-  (fl-crm ledger) is authored but **not yet applied**.
+  (fl-crm ledger), after `20260711150000_hr_payroll_foundation.sql`, was
+  **applied to the production Supabase project 2026-07-11** (post-apply
+  verification passed for both); live end-to-end verification at
+  accounts.fundingloop.au is still outstanding.
 - All UI pages are client components; data access is the Supabase browser
   client under RLS, except file handling and bill deletion which go through
   server routes.
@@ -49,7 +52,9 @@ future/target design is deliberately kept separate in
    `accounts_sync_payroll_snapshots()` RPC - no client insert path exists.
    UPDATE/DELETE are blocked by trigger for every role, including
    `service_role`; corrections require a deliberate manual migration, never
-   an in-place edit. Not yet live (migration unapplied).
+   an in-place edit. Live since 2026-07-11 (post-apply verification passed);
+   live end-to-end verification at accounts.fundingloop.au is still
+   outstanding.
 3. **Server routes** re-verify role + bill ownership in code before any
    service-role operation.
 
@@ -61,7 +66,7 @@ future/target design is deliberately kept separate in
 | `/` | page | Dashboard: current float, outstanding/overdue/due-soon cards, 6-month forecast chart. Read-only load of `payroll_run_snapshots` (never syncs) folds finalised payroll into the chart, with an honest note stating whether payroll is included. |
 | `/bills` | page | Bills CRUD, paid toggle (compare-and-set), attachment upload/view, filters, totals. |
 | `/float` | page | Float settings, deposits, reconciliation, re-baseline to actual. |
-| `/payroll` | page | Nepal SSF salary register (Rigo-matched maths, reference/estimate only), soft-delete offboarding. Payroll run history section: auto-syncs and lists finance snapshots of finalised fl-people runs, with CSV download; shows an amber banner instead when the snapshot migrations are not yet applied. |
+| `/payroll` | page | Nepal SSF salary register (Rigo-matched maths, reference/estimate only), soft-delete offboarding. Payroll run history section: auto-syncs and lists finance snapshots of finalised fl-people runs, with CSV download; falls back to an amber banner instead as a graceful-degradation path if the snapshot schema were ever missing (not the current state - the migrations are applied). |
 | `/security` | page | MFA: enrol authenticator (QR), verify, remove factor. |
 | `POST /api/upload` | route | Attachment upload: role check, bill-ownership check, MIME + magic-byte validation, 15MB cap, service-role storage write, bill update, rollback + replaced-file cleanup. |
 | `GET /api/download` | route | Signed URL (60s) only for a path that exactly matches a real bill's current attachment. |
@@ -83,8 +88,10 @@ future/target design is deliberately kept separate in
   `payroll_employees` register, which is a Rigo-matched reference/estimate
   tool - explicitly not a system of record; that role belongs to fl-people.
 - `lib/payrollSnapshots.js` - pure helpers for the `payroll_run_snapshots`
-  mirror: `isMissingSchemaError()` (tells "migration not applied yet" apart
-  from a real error), `periodLabel()`, `latestSnapshot()`, `snapshotCsv()`
+  mirror: `isMissingSchemaError()` (a resilience guard - distinguishes a
+  missing-schema error from a real error, so the UI can degrade gracefully
+  if the snapshot schema were ever absent), `periodLabel()`,
+  `latestSnapshot()`, `snapshotCsv()`
   (RFC-4180). Unit-tested.
 - `lib/payrollForecast.js` - projects `payroll_run_snapshots` rows into
   `buildForecast()`'s `extraEvents`: known liabilities per finalised period
