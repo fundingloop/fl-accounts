@@ -5,9 +5,11 @@ import { Plus, Pencil, Trash2, X } from "lucide-react";
 import AppShell from "@/components/AppShell";
 import { createClient } from "@/lib/supabase-browser";
 import { useFloatAccount } from "@/lib/useFloatAccount";
+import { useEntities } from "@/lib/useEntities";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { computePayroll, payrollTotals, EMPLOYER_SSF_RATE, TOTAL_SSF_RATE } from "@/lib/payroll";
-import { isMissingSchemaError, periodLabel, snapshotCsv } from "@/lib/payrollSnapshots";
+import { isMissingSchemaError, periodLabel, snapshotCsv, snapshotsForEntity } from "@/lib/payrollSnapshots";
+import { entityDisplayName } from "@/lib/entities";
 
 const emptyForm = {
   employee_name: "",
@@ -37,6 +39,7 @@ const NUM_FIELDS = [
 
 export default function PayrollPage() {
   const { account, loading: accountLoading } = useFloatAccount();
+  const { entities, currentEntity, allSelected } = useEntities();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -123,7 +126,7 @@ export default function PayrollPage() {
   }, []);
 
   const downloadSnapshotCsv = () => {
-    const csv = snapshotCsv(snapshotRows);
+    const csv = snapshotCsv(scopedSnapshotRows);
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -137,6 +140,24 @@ export default function PayrollPage() {
 
   const totals = useMemo(() => payrollTotals(rows), [rows]);
   const preview = useMemo(() => computePayroll(form), [form]);
+
+  // History rows scoped to the selected entity; in all-entities mode every
+  // row is shown alongside an Entity column.
+  const scopedSnapshotRows = useMemo(
+    () => (allSelected ? snapshotRows : snapshotsForEntity(snapshotRows, currentEntity)),
+    [snapshotRows, allSelected, currentEntity]
+  );
+
+  // entityLabelForSnapshot(row) -> display name via entity_id lookup,
+  // falling back to the row's entity_code text when there is no match
+  // (pre entity_id-migration rows, or a code with no registered entity).
+  const entityLabelForSnapshot = (row) => {
+    if (row.entity_id) {
+      const match = entities.find((e) => e.id === row.entity_id);
+      if (match) return entityDisplayName(match);
+    }
+    return row.entity_code || "-";
+  };
 
   const openAdd = () => { setEditingId(null); setForm(emptyForm); setFormOpen(true); };
   const openEdit = (r) => {
@@ -202,9 +223,11 @@ export default function PayrollPage() {
             Nepal salary register - SSF contribution {Math.round(EMPLOYER_SSF_RATE * 100)}% added to income, {Math.round(TOTAL_SSF_RATE * 100)}% deducted (CIT / SSF), both on basic salary - register below is a reference/estimate; finalised history comes from fl-people payroll runs
           </p>
         </div>
-        <button onClick={openAdd} style={{ display: "flex", alignItems: "center", gap: 6, background: "#2BA99F", color: "#fff", border: "none", borderRadius: 8, padding: "10px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
-          <Plus size={16} /> Add employee
-        </button>
+        {!allSelected && (
+          <button onClick={openAdd} style={{ display: "flex", alignItems: "center", gap: 6, background: "#2BA99F", color: "#fff", border: "none", borderRadius: 8, padding: "10px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+            <Plus size={16} /> Add employee
+          </button>
+        )}
       </div>
 
       {/* Payroll run history - finance snapshots of finalised fl-people runs */}
@@ -218,7 +241,7 @@ export default function PayrollPage() {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             {snapshotNote && <span style={{ fontSize: 12, color: "#1E8B82", fontWeight: 600 }}>{snapshotNote}</span>}
-            {!snapshotSchemaMissing && snapshotRows.length > 0 && (
+            {!snapshotSchemaMissing && scopedSnapshotRows.length > 0 && (
               <button onClick={downloadSnapshotCsv} style={smallBtnStyle}>Download CSV</button>
             )}
             {!snapshotSchemaMissing && (
@@ -241,13 +264,14 @@ export default function PayrollPage() {
             <div style={{ background: "#fff", borderRadius: 12, boxShadow: "0 1px 3px rgba(0,0,0,.06)", overflow: "hidden", margin: "12px 0" }}>
               {snapshotLoading ? (
                 <div style={{ padding: 24, color: "#6b7c85", fontSize: 13.5 }}>Loading payroll run history...</div>
-              ) : snapshotRows.length === 0 ? (
+              ) : scopedSnapshotRows.length === 0 ? (
                 <div style={{ padding: 24, color: "#8a99a0", fontSize: 13.5 }}>No finalised payroll runs have been captured yet.</div>
               ) : (
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, whiteSpace: "nowrap" }}>
                     <thead>
                       <tr style={{ background: "#f6f8f9", textAlign: "left" }}>
+                        {allSelected && <Th>Entity</Th>}
                         <Th>Period</Th>
                         <Th>Pay date</Th>
                         <Th align="right">Employees</Th>
@@ -262,8 +286,9 @@ export default function PayrollPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {snapshotRows.map((r) => (
+                      {scopedSnapshotRows.map((r) => (
                         <tr key={r.id} style={{ borderTop: "1px solid #f0f2f3" }}>
+                          {allSelected && <Td>{entityLabelForSnapshot(r)}</Td>}
                           <Td style={{ fontWeight: 600, color: "#012E41" }}>{periodLabel(r.period_year, r.period_month)}</Td>
                           <Td>{formatDate(r.pay_date)}</Td>
                           <Td align="right">{r.employees_count}</Td>
@@ -297,7 +322,7 @@ export default function PayrollPage() {
       )}
 
       {/* Add/edit form with a live payslip preview */}
-      {formOpen && (
+      {!allSelected && formOpen && (
         <form onSubmit={submitForm} style={{ background: "#fff", borderRadius: 12, padding: 20, margin: "16px 0 20px", boxShadow: "0 1px 3px rgba(0,0,0,.06)" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: "#012E41" }}>{editingId ? "Edit employee" : "Add employee"}</div>
@@ -356,6 +381,11 @@ export default function PayrollPage() {
       )}
 
       {/* Register */}
+      {allSelected ? (
+        <div style={{ background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,.06)", marginTop: 16, color: "#8a99a0", fontSize: 13.5 }}>
+          Select a specific entity to manage its payroll register.
+        </div>
+      ) : (
       <div style={{ background: "#fff", borderRadius: 12, boxShadow: "0 1px 3px rgba(0,0,0,.06)", overflow: "hidden", marginTop: 16 }}>
         {accountLoading || loading ? (
           <div style={{ padding: 24, color: "#6b7c85", fontSize: 13.5 }}>Loading payroll...</div>
@@ -442,8 +472,9 @@ export default function PayrollPage() {
           </div>
         )}
       </div>
+      )}
 
-      {rows.length > 0 && (
+      {!allSelected && rows.length > 0 && (
         <div style={{ marginTop: 12, fontSize: 12.5, color: "#6b7c85" }}>
           Total cost to company (gross incl. employer SSF): <strong style={{ color: "#012E41" }}>{formatCurrency(totals.costToCompany, currency)}</strong> per period.
         </div>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isMissingSchemaError, periodLabel, latestSnapshot, snapshotCsv } from "../lib/payrollSnapshots.js";
+import { isMissingSchemaError, periodLabel, latestSnapshot, snapshotCsv, snapshotsForEntity } from "../lib/payrollSnapshots.js";
 
 describe("periodLabel", () => {
   it("formats a valid year/month as 'Jan 2026'", () => {
@@ -113,5 +113,45 @@ describe("snapshotCsv", () => {
       "period,period_start,period_end,pay_date,currency,employees,total_gross,total_ssf_employee,total_ssf_employer,total_ssf_payable,total_tds,total_net,total_cash_cost,finalised_at,finalised_by",
       "",
     ]);
+  });
+});
+
+describe("snapshotsForEntity", () => {
+  const flAu = { id: "au-uuid", code: "fl-au" };
+  const flNepal = { id: "nepal-uuid", code: "fl-nepal" };
+
+  const rows = [
+    { id: "1", entity_id: "au-uuid", entity_code: "fl-au" },
+    { id: "2", entity_id: "nepal-uuid", entity_code: "fl-nepal" },
+    { id: "3", entity_id: null, entity_code: "fl-nepal" }, // pre entity_id-migration row
+    { id: "4", entity_id: "other-uuid", entity_code: "fl-au" }, // entity_id mismatch, dropped
+  ];
+
+  it("returns rows unchanged for a null/undefined entity (All entities)", () => {
+    expect(snapshotsForEntity(rows, null)).toEqual(rows);
+    expect(snapshotsForEntity(rows, undefined)).toEqual(rows);
+  });
+
+  it("matches by entity_id when present", () => {
+    expect(snapshotsForEntity(rows, flAu).map((r) => r.id)).toEqual(["1"]);
+    expect(snapshotsForEntity(rows, flNepal).map((r) => r.id)).toEqual(["2", "3"]);
+  });
+
+  it("falls back to entity_code when entity_id is null/undefined", () => {
+    const preMigrationRows = [{ id: "x", entity_id: null, entity_code: "fl-nepal" }];
+    expect(snapshotsForEntity(preMigrationRows, flNepal).map((r) => r.id)).toEqual(["x"]);
+    expect(snapshotsForEntity(preMigrationRows, flAu)).toEqual([]);
+  });
+
+  it("drops rows whose entity_id mismatches, even if entity_code would have matched", () => {
+    expect(snapshotsForEntity(rows, flAu).map((r) => r.id)).not.toContain("4");
+  });
+
+  it("is null-safe and does not mutate the input array", () => {
+    expect(snapshotsForEntity(null, flAu)).toEqual([]);
+    expect(snapshotsForEntity(undefined, flAu)).toEqual([]);
+    const copy = [...rows];
+    snapshotsForEntity(rows, flAu);
+    expect(rows).toEqual(copy);
   });
 });

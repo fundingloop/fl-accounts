@@ -5,6 +5,9 @@ import { Plus, Pencil, Trash2, Paperclip, Upload, CheckCircle2, Circle, X } from
 import AppShell from "@/components/AppShell";
 import { createClient } from "@/lib/supabase-browser";
 import { useFloatAccount } from "@/lib/useFloatAccount";
+import { useEntities } from "@/lib/useEntities";
+import { isMissingSchemaError } from "@/lib/payrollSnapshots";
+import { entityDisplayName } from "@/lib/entities";
 import { formatCurrency, formatDate, todayISO } from "@/lib/format";
 
 const CATEGORY_SUGGESTIONS = [
@@ -28,13 +31,42 @@ const emptyForm = {
   amount: "",
   invoice_date: "",
   due_date: "",
+  vendor: "",
+  bank_account_id: "",
+  entity_id: "",
 };
 
 function isOverdue(bill) {
   return !bill.paid && bill.due_date && bill.due_date < todayISO();
 }
 
+function bankAccountLabel(acct) {
+  if (!acct) return "-";
+  return acct.nickname || acct.account_name || "-";
+}
+
 export default function BillsPage() {
+  const { entities, currentEntity, allSelected } = useEntities();
+
+  return (
+    <AppShell>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18, flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: "#012E41", margin: 0 }}>Bills</h1>
+          <p style={{ fontSize: 13, color: "#6b7c85", margin: "4px 0 0" }}>
+            {allSelected ? "Invoices, recurring charges and payment status across all entities" : "Invoices, recurring charges and payment status"}
+          </p>
+        </div>
+      </div>
+
+      {allSelected ? <AllEntitiesBills entities={entities} /> : <SingleEntityBills currentEntity={currentEntity} />}
+    </AppShell>
+  );
+}
+
+// ---- single-entity mode -----------------------------------------------------
+
+function SingleEntityBills({ currentEntity }) {
   const { account, loading: accountLoading } = useFloatAccount();
   const [bills, setBills] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -46,6 +78,13 @@ export default function BillsPage() {
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState(null); // bill id currently mid-action (paid toggle / upload / delete)
   const fileInputs = useRef({});
+
+  // Bank account registry for this entity - "Paid from" select + table
+  // lookup. Whether it loads without isMissingSchemaError is the signal
+  // that migration 2 (fin_bank_accounts / bills.vendor / bills.bank_account_id)
+  // is live; both the vendor and bank-account UI are gated on it together.
+  const [bankAccounts, setBankAccounts] = useState([]);
+  const [bankSchemaLive, setBankSchemaLive] = useState(false);
 
   const loadBills = async (accountId) => {
     setLoading(true);
@@ -64,6 +103,42 @@ export default function BillsPage() {
     if (account?.id) loadBills(account.id);
   }, [account?.id]);
 
+  useEffect(() => {
+    if (!currentEntity?.id) {
+      setBankAccounts([]);
+      setBankSchemaLive(false);
+      return;
+    }
+    let cancelled = false;
+    const supabase = createClient();
+    supabase
+      .from("fin_bank_accounts")
+      .select("*")
+      .eq("entity_id", currentEntity.id)
+      .then(({ data, error: err }) => {
+        if (cancelled) return;
+        if (err && isMissingSchemaError(err)) {
+          setBankSchemaLive(false);
+          setBankAccounts([]);
+        } else if (err) {
+          setBankSchemaLive(false);
+          setBankAccounts([]);
+        } else {
+          setBankSchemaLive(true);
+          setBankAccounts(data || []);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentEntity?.id]);
+
+  const bankAccountsById = useMemo(() => {
+    const map = {};
+    for (const a of bankAccounts) map[a.id] = a;
+    return map;
+  }, [bankAccounts]);
+
   const filtered = useMemo(() => {
     if (filter === "unpaid") return bills.filter((b) => !b.paid);
     if (filter === "overdue") return bills.filter(isOverdue);
@@ -72,7 +147,7 @@ export default function BillsPage() {
   }, [bills, filter]);
 
   const total = useMemo(() => filtered.reduce((sum, b) => sum + (Number(b.amount) || 0), 0), [filtered]);
-  const currency = account?.currency || "NPR";
+  const currency = currentEntity?.currency || account?.currency || "NPR";
 
   const openAdd = () => {
     setEditingId(null);
@@ -90,6 +165,9 @@ export default function BillsPage() {
       amount: bill.amount != null ? String(bill.amount) : "",
       invoice_date: bill.invoice_date || "",
       due_date: bill.due_date || "",
+      vendor: bill.vendor || "",
+      bank_account_id: bill.bank_account_id || "",
+      entity_id: "",
     });
     setFormOpen(true);
   };
@@ -116,6 +194,10 @@ export default function BillsPage() {
       invoice_date: form.invoice_date || null,
       due_date: form.due_date || null,
     };
+    if (bankSchemaLive) {
+      payload.vendor = form.vendor.trim() || null;
+      payload.bank_account_id = form.bank_account_id || null;
+    }
 
     if (editingId) {
       const { error: err } = await supabase.from("bills").update(payload).eq("id", editingId);
@@ -221,12 +303,8 @@ export default function BillsPage() {
   };
 
   return (
-    <AppShell>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18, flexWrap: "wrap", gap: 12 }}>
-        <div>
-          <h1 style={{ fontSize: 22, fontWeight: 700, color: "#012E41", margin: 0 }}>Bills</h1>
-          <p style={{ fontSize: 13, color: "#6b7c85", margin: "4px 0 0" }}>Invoices, recurring charges and payment status</p>
-        </div>
+    <>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
         <button
           onClick={openAdd}
           style={{
@@ -281,6 +359,11 @@ export default function BillsPage() {
                 {CATEGORY_SUGGESTIONS.map((c) => <option key={c} value={c} />)}
               </datalist>
             </Field>
+            {bankSchemaLive && (
+              <Field label="Vendor">
+                <input value={form.vendor} onChange={(e) => setForm({ ...form, vendor: e.target.value })} style={inputStyle} />
+              </Field>
+            )}
             <Field label="Type">
               <select value={form.charge_type} onChange={(e) => setForm({ ...form, charge_type: e.target.value, recurrence: e.target.value === "one_off" ? "" : form.recurrence })} style={inputStyle}>
                 <option value="one_off">One-off</option>
@@ -304,6 +387,14 @@ export default function BillsPage() {
             <Field label={form.charge_type === "recurring" ? "First due date" : "Due date"}>
               <input type="date" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} style={inputStyle} />
             </Field>
+            {bankSchemaLive && (
+              <Field label="Paid from (bank account)">
+                <select value={form.bank_account_id} onChange={(e) => setForm({ ...form, bank_account_id: e.target.value })} style={inputStyle}>
+                  <option value="">Not set</option>
+                  {bankAccounts.map((a) => <option key={a.id} value={a.id}>{bankAccountLabel(a)}</option>)}
+                </select>
+              </Field>
+            )}
           </div>
 
           <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
@@ -330,11 +421,13 @@ export default function BillsPage() {
                 <tr style={{ background: "#f6f8f9", textAlign: "left" }}>
                   <Th>Description</Th>
                   <Th>Category</Th>
+                  {bankSchemaLive && <Th>Vendor</Th>}
                   <Th>Type</Th>
                   <Th>Due date</Th>
                   <Th align="right">Amount</Th>
                   <Th>Status</Th>
                   <Th>Attachment</Th>
+                  {bankSchemaLive && <Th>Paid from</Th>}
                   <Th align="right">Actions</Th>
                 </tr>
               </thead>
@@ -351,6 +444,7 @@ export default function BillsPage() {
                         )}
                       </Td>
                       <Td>{bill.category || "-"}</Td>
+                      {bankSchemaLive && <Td>{bill.vendor || "-"}</Td>}
                       <Td>{bill.charge_type === "recurring" ? "Recurring" : "One-off"}</Td>
                       <Td style={overdue ? { color: "#B91C1C", fontWeight: 600 } : undefined}>{formatDate(bill.due_date)}</Td>
                       <Td align="right" style={{ fontWeight: 600 }}>{formatCurrency(bill.amount, currency)}</Td>
@@ -386,6 +480,7 @@ export default function BillsPage() {
                           </button>
                         )}
                       </Td>
+                      {bankSchemaLive && <Td>{bankAccountLabel(bankAccountsById[bill.bank_account_id])}</Td>}
                       <Td align="right">
                         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
                           <button onClick={() => openEdit(bill)} disabled={busy} style={iconBtnStyle} title="Edit"><Pencil size={14} /></button>
@@ -399,16 +494,372 @@ export default function BillsPage() {
               <tfoot>
                 <tr style={{ borderTop: "2px solid #e0e6e8", background: "#f6f8f9" }}>
                   <Td style={{ fontWeight: 700, color: "#012E41" }}>Total ({filtered.length})</Td>
-                  <Td /><Td /><Td />
+                  <Td />
+                  {bankSchemaLive && <Td />}
+                  <Td /><Td />
                   <Td align="right" style={{ fontWeight: 700, color: "#012E41" }}>{formatCurrency(total, currency)}</Td>
-                  <Td /><Td /><Td />
+                  <Td /><Td />
+                  {bankSchemaLive && <Td />}
                 </tr>
               </tfoot>
             </table>
           </div>
         )}
       </div>
-    </AppShell>
+    </>
+  );
+}
+
+// ---- all-entities mode -----------------------------------------------------
+
+function AllEntitiesBills({ entities }) {
+  const [floatAccounts, setFloatAccounts] = useState([]);
+  const [bills, setBills] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [filter, setFilter] = useState("all");
+  const [formOpen, setFormOpen] = useState(false);
+  const [form, setForm] = useState(emptyForm);
+  const [saving, setSaving] = useState(false);
+  const [busyId, setBusyId] = useState(null);
+
+  const load = async () => {
+    setLoading(true);
+    setError("");
+    const supabase = createClient();
+    const [faRes, billsRes] = await Promise.all([
+      supabase.from("float_accounts").select("*"),
+      supabase.from("bills").select("*").order("due_date", { ascending: true, nullsFirst: false }),
+    ]);
+    if (faRes.error) setError(faRes.error.message);
+    if (billsRes.error) setError((prev) => prev || billsRes.error.message);
+    setFloatAccounts(faRes.data || []);
+    setBills(billsRes.data || []);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const accountsById = useMemo(() => {
+    const map = {};
+    for (const a of floatAccounts) map[a.id] = a;
+    return map;
+  }, [floatAccounts]);
+
+  const entityForAccount = (account) => {
+    if (!account) return null;
+    if (account.entity_id) return entities.find((e) => e.id === account.entity_id) || null;
+    // Pre-migration: the single virtual entity owns the single float account.
+    return entities.find((e) => e.virtual) || entities[0] || null;
+  };
+
+  const entityFloatAccount = (entity) => {
+    if (!entity) return null;
+    if (entity.virtual) return floatAccounts[0] || null;
+    return floatAccounts.find((a) => a.entity_id === entity.id) || null;
+  };
+
+  const filtered = useMemo(() => {
+    if (filter === "unpaid") return bills.filter((b) => !b.paid);
+    if (filter === "overdue") return bills.filter(isOverdue);
+    if (filter === "paid") return bills.filter((b) => b.paid);
+    return bills;
+  }, [bills, filter]);
+
+  // Per-currency subtotals only - never summed across currencies.
+  const totalsByCurrency = useMemo(() => {
+    const totals = {};
+    for (const bill of filtered) {
+      const account = accountsById[bill.account_id];
+      const entity = entityForAccount(account);
+      const currency = entity?.currency || account?.currency || "?";
+      totals[currency] = (totals[currency] || 0) + (Number(bill.amount) || 0);
+    }
+    return totals;
+    // entityForAccount/entityFloatAccount are plain helpers recomputed each
+    // render from entities/floatAccounts, which are already listed below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered, accountsById, entities]);
+
+  const defaultEntityId = useMemo(() => {
+    const withAccount = entities.find((e) => entityFloatAccount(e));
+    return withAccount ? withAccount.id || withAccount.code : "";
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entities, floatAccounts]);
+
+  const openAdd = () => {
+    setForm({ ...emptyForm, entity_id: defaultEntityId });
+    setFormOpen(true);
+  };
+
+  const closeForm = () => {
+    setFormOpen(false);
+    setForm(emptyForm);
+  };
+
+  const submitForm = async (e) => {
+    e.preventDefault();
+    const entity = entities.find((en) => (en.id || en.code) === form.entity_id);
+    const account = entityFloatAccount(entity);
+    if (!account) {
+      setError("Select an entity that has a float account.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    const { error: err } = await supabase.from("bills").insert({
+      description: form.description.trim(),
+      category: form.category.trim() || null,
+      charge_type: form.charge_type,
+      recurrence: form.charge_type === "recurring" ? form.recurrence || null : null,
+      amount: Number(form.amount) || 0,
+      invoice_date: form.invoice_date || null,
+      due_date: form.due_date || null,
+      account_id: account.id,
+      created_by: user?.id || null,
+    });
+    if (err) {
+      setError(err.message);
+      setSaving(false);
+      return;
+    }
+    setSaving(false);
+    closeForm();
+    load();
+  };
+
+  const togglePaid = async (bill) => {
+    setBusyId(bill.id);
+    const supabase = createClient();
+    const nextPaid = !bill.paid;
+    const { data, error: err } = await supabase
+      .from("bills")
+      .update({ paid: nextPaid, paid_date: nextPaid ? todayISO() : null })
+      .eq("id", bill.id)
+      .eq("paid", bill.paid)
+      .select("id");
+    if (err) setError(err.message);
+    else if (!data || data.length === 0) {
+      setError("This bill was changed by someone else - the list has been refreshed, please retry.");
+    }
+    await load();
+    setBusyId(null);
+  };
+
+  const deleteBill = async (bill) => {
+    if (!window.confirm(`Delete "${bill.description}"? This cannot be undone.`)) return;
+    setBusyId(bill.id);
+    try {
+      const res = await fetch("/api/bills/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bill_id: bill.id }),
+      });
+      const json = await res.json();
+      if (!res.ok) setError(json.error || "Could not delete the bill");
+    } catch (err) {
+      setError(err.message || "Could not delete the bill");
+    }
+    await load();
+    setBusyId(null);
+  };
+
+  const selectedEntity = entities.find((en) => (en.id || en.code) === form.entity_id);
+  const selectedAccount = entityFloatAccount(selectedEntity);
+  const formCurrency = selectedEntity?.currency || "";
+
+  return (
+    <>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+        <button
+          onClick={openAdd}
+          style={{
+            display: "flex", alignItems: "center", gap: 6, background: "#2BA99F", color: "#fff", border: "none",
+            borderRadius: 8, padding: "10px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+          }}
+        >
+          <Plus size={16} /> Add bill
+        </button>
+      </div>
+
+      {error && (
+        <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#B91C1C", borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 13, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>{error}</span>
+          <button onClick={() => setError("")} style={{ background: "none", border: "none", cursor: "pointer", color: "#B91C1C" }}><X size={14} /></button>
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        {FILTERS.map((f) => (
+          <button
+            key={f.id}
+            onClick={() => setFilter(f.id)}
+            style={{
+              border: "1px solid " + (filter === f.id ? "#2BA99F" : "#e0e6e8"),
+              background: filter === f.id ? "#2BA99F" : "#fff",
+              color: filter === f.id ? "#fff" : "#334",
+              borderRadius: 20, padding: "6px 14px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+            }}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      {formOpen && (
+        <form onSubmit={submitForm} style={{ background: "#fff", borderRadius: 12, padding: 20, marginBottom: 20, boxShadow: "0 1px 3px rgba(0,0,0,.06)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "#012E41" }}>Add bill</div>
+            <button type="button" onClick={closeForm} style={{ background: "none", border: "none", cursor: "pointer", color: "#8a99a0" }}><X size={16} /></button>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14 }}>
+            <Field label="Entity" required>
+              <select required value={form.entity_id} onChange={(e) => setForm({ ...form, entity_id: e.target.value })} style={inputStyle}>
+                {entities.map((ent) => {
+                  const key = ent.id || ent.code;
+                  const hasAccount = !!entityFloatAccount(ent);
+                  return (
+                    <option key={key} value={key} disabled={!hasAccount}>
+                      {entityDisplayName(ent)}{hasAccount ? "" : " (no float account)"}
+                    </option>
+                  );
+                })}
+              </select>
+            </Field>
+            <Field label="Description" required>
+              <input required value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} style={inputStyle} />
+            </Field>
+            <Field label="Category">
+              <input list="category-suggestions" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} style={inputStyle} />
+              <datalist id="category-suggestions">
+                {CATEGORY_SUGGESTIONS.map((c) => <option key={c} value={c} />)}
+              </datalist>
+            </Field>
+            <Field label="Type">
+              <select value={form.charge_type} onChange={(e) => setForm({ ...form, charge_type: e.target.value, recurrence: e.target.value === "one_off" ? "" : form.recurrence })} style={inputStyle}>
+                <option value="one_off">One-off</option>
+                <option value="recurring">Recurring</option>
+              </select>
+            </Field>
+            {form.charge_type === "recurring" && (
+              <Field label="Recurrence" required>
+                <select required value={form.recurrence} onChange={(e) => setForm({ ...form, recurrence: e.target.value })} style={inputStyle}>
+                  <option value="" disabled>Select...</option>
+                  {RECURRENCE_OPTIONS.map((r) => <option key={r} value={r}>{r[0].toUpperCase() + r.slice(1)}</option>)}
+                </select>
+              </Field>
+            )}
+            <Field label={`Amount${formCurrency ? ` (${formCurrency})` : ""}`} required>
+              <input required type="number" step="0.01" min="0" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} style={inputStyle} />
+            </Field>
+            <Field label="Invoice date">
+              <input type="date" value={form.invoice_date} onChange={(e) => setForm({ ...form, invoice_date: e.target.value })} style={inputStyle} />
+            </Field>
+            <Field label={form.charge_type === "recurring" ? "First due date" : "Due date"}>
+              <input type="date" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} style={inputStyle} />
+            </Field>
+          </div>
+
+          {!selectedAccount && (
+            <div style={{ marginTop: 12, fontSize: 12, color: "#B45309" }}>The selected entity has no float account yet - choose a different entity.</div>
+          )}
+
+          <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+            <button type="submit" disabled={saving || !selectedAccount} style={{ background: "#012E41", color: "#fff", border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 13, fontWeight: 600, cursor: saving ? "default" : "pointer", fontFamily: "inherit" }}>
+              {saving ? "Saving..." : "Add bill"}
+            </button>
+            <button type="button" onClick={closeForm} style={{ background: "#f2f4f5", color: "#334", border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+
+      <div style={{ background: "#fff", borderRadius: 12, boxShadow: "0 1px 3px rgba(0,0,0,.06)", overflow: "hidden" }}>
+        {loading ? (
+          <div style={{ padding: 24, color: "#6b7c85", fontSize: 13.5 }}>Loading bills...</div>
+        ) : filtered.length === 0 ? (
+          <div style={{ padding: 24, color: "#8a99a0", fontSize: 13.5 }}>No bills in this view.</div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: "#f6f8f9", textAlign: "left" }}>
+                  <Th>Description</Th>
+                  <Th>Entity</Th>
+                  <Th>Category</Th>
+                  <Th>Type</Th>
+                  <Th>Due date</Th>
+                  <Th align="right">Amount</Th>
+                  <Th>Status</Th>
+                  <Th align="right">Actions</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((bill) => {
+                  const overdue = isOverdue(bill);
+                  const busy = busyId === bill.id;
+                  const account = accountsById[bill.account_id];
+                  const entity = entityForAccount(account);
+                  const currency = entity?.currency || account?.currency || "NPR";
+                  return (
+                    <tr key={bill.id} style={{ borderTop: "1px solid #f0f2f3" }}>
+                      <Td>
+                        <div style={{ fontWeight: 600, color: "#012E41" }}>{bill.description}</div>
+                        {bill.charge_type === "recurring" && (
+                          <div style={{ fontSize: 11, color: "#8a99a0" }}>Recurring - {bill.recurrence}</div>
+                        )}
+                      </Td>
+                      <Td>{entity ? entityDisplayName(entity) : "-"}</Td>
+                      <Td>{bill.category || "-"}</Td>
+                      <Td>{bill.charge_type === "recurring" ? "Recurring" : "One-off"}</Td>
+                      <Td style={overdue ? { color: "#B91C1C", fontWeight: 600 } : undefined}>{formatDate(bill.due_date)}</Td>
+                      <Td align="right" style={{ fontWeight: 600 }}>{formatCurrency(bill.amount, currency)}</Td>
+                      <Td>
+                        <button
+                          onClick={() => togglePaid(bill)}
+                          disabled={busy}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 6, border: "none", background: "none", cursor: busy ? "default" : "pointer",
+                            color: bill.paid ? "#1E8B82" : overdue ? "#B91C1C" : "#B45309", fontSize: 12.5, fontWeight: 600, padding: 0, fontFamily: "inherit",
+                          }}
+                          title={bill.paid ? "Mark unpaid" : "Mark paid"}
+                        >
+                          {bill.paid ? <CheckCircle2 size={15} /> : <Circle size={15} />}
+                          {bill.paid ? "Paid" : overdue ? "Overdue" : "Unpaid"}
+                        </button>
+                      </Td>
+                      <Td align="right">
+                        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                          <button onClick={() => deleteBill(bill)} disabled={busy} style={{ ...iconBtnStyle, color: "#B91C1C" }} title="Delete"><Trash2 size={14} /></button>
+                        </div>
+                      </Td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr style={{ borderTop: "2px solid #e0e6e8", background: "#f6f8f9" }}>
+                  <Td style={{ fontWeight: 700, color: "#012E41" }}>Total ({filtered.length})</Td>
+                  <Td /><Td /><Td /><Td />
+                  <Td align="right" style={{ fontWeight: 700, color: "#012E41" }}>
+                    {Object.entries(totalsByCurrency).map(([cur, amt]) => formatCurrency(amt, cur)).join(" · ") || "-"}
+                  </Td>
+                  <Td /><Td />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 

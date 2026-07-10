@@ -1,17 +1,131 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Settings2, PlusCircle, RefreshCcw, Trash2 } from "lucide-react";
+import { Settings2, PlusCircle, RefreshCcw, Trash2, Building2 } from "lucide-react";
 import AppShell from "@/components/AppShell";
 import { createClient } from "@/lib/supabase-browser";
 import { useFloatAccount } from "@/lib/useFloatAccount";
+import { useEntities } from "@/lib/useEntities";
 import { computeCurrentBalance } from "@/lib/forecast";
+import { entityDisplayName } from "@/lib/entities";
 import { formatCurrency, formatDate, todayISO } from "@/lib/format";
 
 const CURRENCY_OPTIONS = ["NPR", "AUD", "USD", "INR"];
 
 export default function FloatPage() {
-  const { account, loading: accountLoading, refresh } = useFloatAccount();
+  const { entities, allSelected, loading: entitiesLoading } = useEntities();
+
+  return (
+    <AppShell>
+      <div style={{ marginBottom: 18 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700, color: "#012E41", margin: 0 }}>Float</h1>
+        <p style={{ fontSize: 13, color: "#6b7c85", margin: "4px 0 0" }}>
+          {allSelected ? "Per-entity float summary" : "Starting float, deposits and reconciliation"}
+        </p>
+      </div>
+      {allSelected ? <AllEntitiesFloat entities={entities} entitiesLoading={entitiesLoading} /> : <SingleEntityFloat />}
+    </AppShell>
+  );
+}
+
+function AllEntitiesFloat({ entities, entitiesLoading }) {
+  const [floatAccounts, setFloatAccounts] = useState([]);
+  const [bills, setBills] = useState([]);
+  const [deposits, setDeposits] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    const supabase = createClient();
+    Promise.all([
+      supabase.from("float_accounts").select("*"),
+      supabase.from("bills").select("*"),
+      supabase.from("float_deposits").select("*"),
+    ]).then(([faRes, billsRes, depRes]) => {
+      if (cancelled) return;
+      const firstError = faRes.error || billsRes.error || depRes.error;
+      if (firstError) setError(firstError.message || "Could not load float data.");
+      setFloatAccounts(faRes.data || []);
+      setBills(billsRes.data || []);
+      setDeposits(depRes.data || []);
+      setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const rows = useMemo(() => {
+    return entities.map((entity) => {
+      const account = entity.virtual ? floatAccounts[0] || null : floatAccounts.find((a) => a.entity_id === entity.id) || null;
+      if (!account) return { entity, account: null };
+      const accountBills = bills.filter((b) => b.account_id === account.id);
+      const accountDeposits = deposits.filter((d) => d.account_id === account.id);
+      const balanceNow = computeCurrentBalance({
+        startingFloat: account.starting_float,
+        floatAsOfDate: account.float_as_of_date,
+        deposits: accountDeposits,
+        bills: accountBills,
+      });
+      return { entity, account, balanceNow };
+    });
+  }, [entities, floatAccounts, bills, deposits]);
+
+  if (entitiesLoading || loading) {
+    return <div style={{ color: "#6b7c85", fontSize: 14 }}>Loading...</div>;
+  }
+
+  return (
+    <>
+      {error && (
+        <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#B91C1C", borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 13 }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ fontSize: 12.5, color: "#8a99a0", marginBottom: 16 }}>Switch to a specific entity to edit settings or log deposits.</div>
+
+      {rows.length === 0 ? (
+        <div style={{ background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,.06)", color: "#6b7c85", fontSize: 13.5 }}>
+          No entities found.
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 16 }}>
+          {rows.map(({ entity, account, balanceNow }) => {
+            const currency = entity.currency || account?.currency || "NPR";
+            return (
+              <div key={entity.id || entity.code} style={{ background: "#fff", borderRadius: 12, padding: 18, boxShadow: "0 1px 3px rgba(0,0,0,.06)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                  <Building2 size={15} color="#2BA99F" />
+                  <div style={{ fontWeight: 600, color: "#012E41", fontSize: 14 }}>{entityDisplayName(entity)}</div>
+                </div>
+                <div style={{ fontSize: 11, color: "#8a99a0", marginBottom: 10 }}>{currency}</div>
+                {account ? (
+                  <>
+                    <ReconRow label="Starting float" value={formatCurrency(account.starting_float, currency)} />
+                    <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 8, fontSize: 13.5 }}>
+                      <span style={{ fontWeight: 700, color: "#012E41" }}>Balance now</span>
+                      <span style={{ fontWeight: 700, color: "#012E41" }}>{formatCurrency(balanceNow, currency)}</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: "#8a99a0", marginTop: 6 }}>as of {formatDate(account.float_as_of_date)}</div>
+                  </>
+                ) : (
+                  <div style={{ color: "#8a99a0", fontSize: 12.5 }}>No float account yet</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+}
+
+function SingleEntityFloat() {
+  const { account, entity: currentEntity, loading: accountLoading, refresh } = useFloatAccount();
   const [bills, setBills] = useState([]);
   const [deposits, setDeposits] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -59,7 +173,7 @@ export default function FloatPage() {
     }
   }, [account]);
 
-  const currency = account?.currency || "NPR";
+  const currency = currentEntity?.currency || account?.currency || "NPR";
 
   const currentBalance = useMemo(() => {
     if (!account) return 0;
@@ -174,19 +288,14 @@ export default function FloatPage() {
   };
 
   if (accountLoading || !settingsForm) {
-    return (
-      <AppShell>
-        <div style={{ color: "#6b7c85", fontSize: 14 }}>Loading...</div>
-      </AppShell>
-    );
+    return <div style={{ color: "#6b7c85", fontSize: 14 }}>Loading...</div>;
   }
 
   return (
-    <AppShell>
-      <div style={{ marginBottom: 18 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: "#012E41", margin: 0 }}>Float</h1>
-        <p style={{ fontSize: 13, color: "#6b7c85", margin: "4px 0 0" }}>Starting float, deposits and reconciliation</p>
-      </div>
+    <>
+      {currentEntity && (
+        <div style={{ fontSize: 12.5, color: "#8a99a0", marginBottom: 14 }}>{entityDisplayName(currentEntity)}</div>
+      )}
 
       {error && (
         <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#B91C1C", borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 13 }}>
@@ -322,7 +431,7 @@ export default function FloatPage() {
           </div>
         )}
       </div>
-    </AppShell>
+    </>
   );
 }
 
