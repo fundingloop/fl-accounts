@@ -13,6 +13,10 @@ multi-entity finance system described in
   `20260711130000_fl_accounts_integrity`) were applied to the production
   Supabase project on 2026-07-11 - the milestone is closed.
 - Test foundation: vitest suite over forecast/payroll/format maths.
+- CI: GitHub Actions workflow (`.github/workflows/ci.yml`) running npm ci,
+  test, lint and build on every push and pull request - added in commit
+  288a9f0, first run confirmed green.
+- Baseline release tagged `accounts-platform-v1`.
 - Documentation set (this docs/ tree) established.
 
 ## Next (Phase 2 - first platform increments)

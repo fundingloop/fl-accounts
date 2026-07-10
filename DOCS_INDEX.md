@@ -7,7 +7,7 @@
 | [docs/SECURITY.md](docs/SECURITY.md) | July 2026 security review: model, full ranked findings register with remediation status, standing rules for contributors. |
 | [docs/FINANCIAL_SYSTEM_REVIEW.md](docs/FINANCIAL_SYSTEM_REVIEW.md) | Assessment of v1 as a finance system: capability matrix, scaling limits, ranked recommendations. |
 | [docs/ARCHITECTURE_RECOMMENDATIONS.md](docs/ARCHITECTURE_RECOMMENDATIONS.md) | Target ledger-centric schema (entities, journals, payroll runs, revenue, budgets) and the additive migration path. Recommendation only - not implemented. |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Done / next / later. The July 2026 security/integrity migrations are applied - milestone closed. |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Done / next / later. The July 2026 security/integrity migrations are applied - milestone closed; CI live; baseline tagged `accounts-platform-v1`. |
 | [docs/TECH_DEBT.md](docs/TECH_DEBT.md) | Accepted debt, why, and the trigger to revisit each item. |
 | [docs/BUILD_BRIEF.md](docs/BUILD_BRIEF.md) | The original v1 build brief (historical; superseded where docs above differ). |
 

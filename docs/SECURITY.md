@@ -54,8 +54,8 @@ action required.
 | # | Finding | Status |
 |---|---|---|
 | L1 | `fl-accounts.zip` (full source snapshot) tracked in git; HEAD commit consisted solely of it. Verified to contain no secrets (.env.local not inside). | Fixed - removed from the tree (history untouched; nothing sensitive to purge). |
-| L2 | No tests at all; forecast/payroll correctness asserted only in comments. | Fixed - vitest suite covering forecast maths, payroll (Rigo worked example), and formatters; `npm test` wired up. |
-| L3 | No ESLint config (`next lint` was unconfigured). | Fixed - `next/core-web-vitals` config added; lint clean. |
+| L2 | No tests at all; forecast/payroll correctness asserted only in comments. | Fixed - vitest suite covering forecast maths, payroll (Rigo worked example), and formatters; `npm test` wired up. The suite now runs in GitHub Actions CI on every push and pull request. |
+| L3 | No ESLint config (`next lint` was unconfigured). | Fixed - `next/core-web-vitals` config added; lint clean and enforced in CI. |
 | L4 | Fonts loaded from Google Fonts at runtime (render-blocking, availability + privacy dependency). | Fixed - self-hosted via `next/font/google`. Favicon still loads from fundingloop.com.au (documented, cosmetic). |
 | L5 | `useFloatAccount` picked an arbitrary row (`limit(1)` without order) - non-deterministic if a second float account ever exists. | Fixed - deterministic oldest-first ordering. |
 | L6 | Failed saves wiped user input (bills form closed on error; deposit/re-baseline forms reset on error) - ambiguous failure UX on financial entry. | Fixed - all forms stay open with values intact on failure; only success closes/reloads. |

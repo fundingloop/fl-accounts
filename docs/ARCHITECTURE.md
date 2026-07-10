@@ -15,6 +15,8 @@ future/target design is deliberately kept separate in
 - All UI pages are client components; data access is the Supabase browser
   client under RLS, except file handling and bill deletion which go through
   server routes.
+- CI: GitHub Actions (`.github/workflows/ci.yml`) runs the full gate (npm ci,
+  test, lint, build) on every push and pull request.
 
 ## Auth & authorisation (three layers)
 

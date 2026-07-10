@@ -22,6 +22,10 @@ npm run lint
 npm run build
 ```
 
+GitHub Actions CI (`.github/workflows/ci.yml`) runs the same gate - `npm ci`,
+`npm test`, `npm run lint`, `npm run build` - on every push and pull request.
+The workflow is live and green.
+
 `.env.local` (never committed):
 
 ```
