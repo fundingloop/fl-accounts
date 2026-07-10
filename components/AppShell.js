@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Receipt, Wallet, Users, ShieldCheck, LogOut, Landmark, ArrowLeftRight, Building2 } from "lucide-react";
+import { LayoutDashboard, Receipt, Wallet, Users, ShieldCheck, LogOut, Landmark, ArrowLeftRight, Building2, BookOpen } from "lucide-react";
 import { createClient } from "@/lib/supabase-browser";
 import EntitySwitcher from "@/components/EntitySwitcher";
 
@@ -13,6 +13,7 @@ const NAV_ITEMS = [
   { href: "/payroll", label: "Payroll", Icon: Users },
   { href: "/banking", label: "Banking", Icon: Landmark },
   { href: "/transfers", label: "Transfers", Icon: ArrowLeftRight },
+  { href: "/ledger", label: "Ledger", Icon: BookOpen },
   { href: "/entities", label: "Entities", Icon: Building2 },
   { href: "/security", label: "Security", Icon: ShieldCheck },
 ];
