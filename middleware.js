@@ -2,6 +2,21 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse } from "next/server";
 import { ACCOUNTS_ALLOWED_ROLES } from "@/lib/roles";
 
+// Base64url-decode the JWT payload and read its `aal` claim. The token was
+// already authenticated by supabase.auth.getUser() above - this just reads a
+// claim off it, it does not itself verify anything. Uses atob (not Buffer)
+// because middleware runs on the Edge runtime. Any decode failure returns
+// null, which the caller treats as "not AAL2" - it fails closed.
+function readAal(token) {
+  try {
+    const b64 = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+    return JSON.parse(atob(padded)).aal || null;
+  } catch {
+    return null;
+  }
+}
+
 // Role-gated middleware. fl-accounts is reachable ONLY by an authenticated user
 // whose team_member role is accounts / manager / admin. Everyone else (bd_rep,
 // read_only, unknown, or not a team member) is bounced to /login. This is the
@@ -55,6 +70,28 @@ export async function middleware(request) {
     url.pathname = "/login";
     url.searchParams.set("denied", "1");
     return isLogin ? response : NextResponse.redirect(url);
+  }
+
+  // MFA gate: if this user has a verified TOTP factor enrolled, their
+  // session must have stepped up to AAL2 - a password alone is not enough.
+  // Users with no verified factor are unaffected (MFA is opt-in).
+  const hasVerifiedFactor = (user.factors || []).some((f) => f.status === "verified");
+  if (hasVerifiedFactor) {
+    const { data: { session } } = await supabase.auth.getSession();
+    const aal = readAal(session?.access_token);
+    if (aal !== "aal2") {
+      if (isApi) return NextResponse.json({ error: "MFA required" }, { status: 401 });
+      if (!isLogin) {
+        const url = request.nextUrl.clone();
+        url.pathname = "/login";
+        url.searchParams.set("mfa", "1");
+        return NextResponse.redirect(url);
+      }
+      // /login itself: let it through as-is, the login page completes the
+      // challenge there. Return early so the "allowed user hitting /login"
+      // rule below doesn't bounce them to the dashboard before AAL2.
+      return response;
+    }
   }
 
   // Allowed user hitting /login: send them to the dashboard.

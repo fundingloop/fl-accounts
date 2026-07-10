@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Receipt, Wallet, Users, LogOut } from "lucide-react";
+import { LayoutDashboard, Receipt, Wallet, Users, ShieldCheck, LogOut } from "lucide-react";
 import { createClient } from "@/lib/supabase-browser";
 
 const NAV_ITEMS = [
@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { href: "/bills", label: "Bills", Icon: Receipt },
   { href: "/float", label: "Float", Icon: Wallet },
   { href: "/payroll", label: "Payroll", Icon: Users },
+  { href: "/security", label: "Security", Icon: ShieldCheck },
 ];
 
 // Shared chrome for all three pages: navy/teal left nav + sign out. Each page
