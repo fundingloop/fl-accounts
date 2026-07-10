@@ -30,6 +30,8 @@ future/target design is deliberately kept separate in
    `rls_team_members_self_read` policy (migration 20260711120000).
    DB backstops: CHECK constraints on amounts/recurrence and the append-only
    `fl_accounts_audit_log` fed by triggers (migration 20260711130000).
+   Both migrations are applied to the production Supabase project
+   (2026-07-11) - this section describes live behaviour.
 3. **Server routes** re-verify role + bill ownership in code before any
    service-role operation.
 

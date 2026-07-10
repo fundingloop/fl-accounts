@@ -44,7 +44,7 @@ capabilities cannot be bolted on without schema evolution.
 | Budgets / actual-vs-forecast | Not supported | No budget tables; forecasts are ephemeral (recomputed per page view, never persisted), so there is nothing to compare actuals against. |
 | Tax obligations / liabilities | Not supported | SSF/TDS/SST are computed for display but never accrued as liabilities with due dates; they do not appear in cashflow. |
 | Intercompany transfers | Not supported | Single-entity model; a transfer would be a deposit with a note. |
-| Audit history | Now partial | Added 2026-07: `fl_accounts_audit_log` (append-only, trigger-fed, admin-read) captures every insert/update/delete on the four tables. |
+| Audit history | Now partial | Added and applied to production 2026-07-11: `fl_accounts_audit_log` (append-only, trigger-fed, admin-read) captures every insert/update/delete on the four tables. |
 | Immutable financial history | Not supported by design | All four tables are mutated in place by any accounts-app user; deletes were hard deletes (payroll is now soft-delete; bills/deposits remain hard-delete with audit snapshots). True immutability needs a ledger design. |
 | Cashflow forecasting | v1-adequate | Deterministic, well-factored client util; fine at this volume. Will not scale to multi-account/multi-entity (full-table reads per page, no persistence, no payroll/tax inflows-outflows). |
 | Management reporting | Not supported | No period concept, no categories beyond free-text, no persisted aggregates. |

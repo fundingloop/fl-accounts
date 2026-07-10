@@ -7,17 +7,19 @@ multi-entity finance system described in
 
 ## Now (done - July 2026 remediation)
 
-- Security hardening: accounts-role RLS fix (migration, pending apply), MFA
-  (TOTP), security headers, upload/download hardening, honest failure
-  handling, audit journal + DB constraints (migration, pending apply).
+- Security hardening: accounts-role RLS fix, MFA (TOTP), security headers,
+  upload/download hardening, honest failure handling, audit journal + DB
+  constraints. Both migrations (`20260711120000_team_members_self_read`,
+  `20260711130000_fl_accounts_integrity`) were applied to the production
+  Supabase project on 2026-07-11 - the milestone is closed.
 - Test foundation: vitest suite over forecast/payroll/format maths.
 - Documentation set (this docs/ tree) established.
 
 ## Next (Phase 2 - first platform increments)
 
-1. **Apply the two pending migrations** (`team_members_self_read`,
-   `fl_accounts_integrity`) via fl-crm's `supabase db push`, run their
-   post-apply verification, and confirm the accounts user can sign in.
+1. **Live verification** of the applied milestone at
+   accounts.fundingloop.au: accounts-role sign-in, MFA enrolment, attachment
+   round-trip, audit rows landing (see SECURITY.md post-apply checks).
 2. **Payroll runs**: `payroll_runs` + `payroll_run_lines`, a "close period"
    action, payslip history, SSF/TDS liability accrual, payroll line in the
    cashflow forecast. (Step 2 of the migration path; highest value.)
