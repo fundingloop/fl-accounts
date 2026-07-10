@@ -4,17 +4,22 @@ Funding Loop's internal finance app - today: multi-entity accounts payable,
 float tracking, cashflow forecasting, the SSF payroll register, a read-only
 mirror of finalised fl-people payroll runs (payroll history + payroll in the
 forecast), a bank account registry and a transfer workflow (including
-intercompany transfers). Long-term: the company-wide finance and operations
-platform (see [docs/ROADMAP.md](docs/ROADMAP.md)).
+intercompany transfers), and a double-entry general ledger foundation
+(chart of accounts, manual journal entry, posting and reversal). Long-term:
+the company-wide finance and operations platform (see
+[docs/ROADMAP.md](docs/ROADMAP.md)).
 
-Pages: Dashboard, Bills, Float, Payroll, Banking, Transfers, Entities,
-Security - each entity-aware via a persistent entity switcher (Current /
-All entities). The entity, bank account and transfer schema
-(`fin_entities`, `fin_bank_accounts`, `fin_transfers`) is authored and
-committed to the fl-crm ledger but **not yet applied** to production - see
-[docs/ENTITY_MODEL.md](docs/ENTITY_MODEL.md) and
-[docs/BANK_ACCOUNT_MODEL.md](docs/BANK_ACCOUNT_MODEL.md). Until it is
-applied, the app degrades gracefully to a single virtual Nepal entity.
+Pages: Dashboard, Bills, Float, Payroll, Banking, Transfers, Ledger,
+Entities, Security - each entity-aware via a persistent entity switcher
+(Current / All entities). The entity, bank account, transfer and ledger
+schema (`fin_entities`, `fin_bank_accounts`, `fin_transfers`, `fin_accounts`,
+`fin_journals`, `fin_journal_lines`) is authored and committed to the
+fl-crm ledger but **not yet applied** to production - see
+[docs/ENTITY_MODEL.md](docs/ENTITY_MODEL.md),
+[docs/BANK_ACCOUNT_MODEL.md](docs/BANK_ACCOUNT_MODEL.md) and
+[docs/LEDGER_ARCHITECTURE.md](docs/LEDGER_ARCHITECTURE.md). Until it is
+applied, the app degrades gracefully to a single virtual Nepal entity /
+amber "not applied yet" banners.
 
 - **Live**: accounts.fundingloop.au (own Vercel project)
 - **Stack**: Next.js 14 App Router (plain JS), Supabase (shared project with
@@ -68,6 +73,15 @@ Two further tables are authored in the ledger but **not yet applied**:
 `payroll_employees`/`payroll_run_snapshots`. See
 [docs/ENTITY_MODEL.md](docs/ENTITY_MODEL.md) and
 [docs/BANK_ACCOUNT_MODEL.md](docs/BANK_ACCOUNT_MODEL.md).
+
+A third set of tables, the double-entry general ledger
+(`fin_accounts`, `fin_journals`, `fin_journal_lines`) plus two
+`service_role`-only posting RPCs (`fin_post_journal`, `fin_reverse_journal`),
+is also authored (`20260711240000_fin_ledger.sql`, requires the two
+migrations above applied first) but **not yet applied**. See
+[docs/LEDGER_ARCHITECTURE.md](docs/LEDGER_ARCHITECTURE.md),
+[docs/CHART_OF_ACCOUNTS.md](docs/CHART_OF_ACCOUNTS.md) and
+[docs/POSTING_ENGINE.md](docs/POSTING_ENGINE.md).
 
 ## Documentation
 

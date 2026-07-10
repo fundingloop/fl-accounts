@@ -54,6 +54,23 @@ multi-entity finance system described in
   `/transfers`) until they are. See ENTITY_MODEL.md and
   BANK_ACCOUNT_MODEL.md for the full design; "Next" below for the apply
   plan.
+- **General ledger foundation** (commit b31b911, fl-crm 622fb1e,
+  2026-07-11): done at the schema/app level. `fin_accounts` (per-entity
+  chart of accounts, 8 types, archive-only), `fin_journals` /
+  `fin_journal_lines` (double-entry journal headers/lines - draft rows
+  RLS-editable, posted rows immutable for every role) and two
+  `service_role`-only posting RPCs, `fin_post_journal()` /
+  `fin_reverse_journal()`, authored as `20260711240000_fin_ledger.sql`
+  (fl-crm ledger, requires `20260711220000_fin_entities.sql` and
+  `20260711230000_fin_bank_accounts.sql` applied first). New `/ledger`
+  module (Journal Entries list, manual journal entry/edit, journal detail
+  with post/reverse/delete, Chart of Accounts) added to `AppShell` between
+  Transfers and Entities; `lib/ledger.js` + `lib/ledgerPostingErrors.js`
+  with unit tests. **The migration is committed to the fl-crm ledger but NOT
+  YET APPLIED to the production Supabase project** - `/ledger` and
+  `/ledger/accounts` show the same amber "migration not applied yet" banner
+  pattern until it is. See LEDGER_ARCHITECTURE.md, CHART_OF_ACCOUNTS.md and
+  POSTING_ENGINE.md for the full design; "Next" below for the apply plan.
 
 ## Next (Phase 2 - first platform increments)
 
@@ -110,19 +127,57 @@ multi-entity finance system described in
      non-accounts user, both new tables return 0 rows.
    See ENTITY_MODEL.md and BANK_ACCOUNT_MODEL.md for the full column/trigger
    reference behind each check.
-4. **Live verification** of the entities/banking milestone at
+4. **Apply the general ledger foundation migration**: schema/app work is
+   done (see "Now" above) but `20260711240000_fin_ledger.sql` is not yet
+   applied to the production Supabase project. It requires
+   `20260711220000_fin_entities.sql` and `20260711230000_fin_bank_accounts.sql`
+   (item 3 above) applied first. Apply it and run its own pre-apply /
+   post-apply blocks (see the migration file's header comment for the exact
+   SQL):
+   - Pre-apply: confirm `fin_entities`/`fin_bank_accounts` exist,
+     `fin_accounts`/`fin_journals`/`fin_journal_lines` do not exist yet, the
+     three shared RLS helper functions exist, and both seeded entities
+     (`fl-au`, `fl-nepal`) are present.
+   - Post-apply: the three new tables and their triggers exist; the seeded
+     chart counts are exactly 14 (`fl-au`) and 16 (`fl-nepal`); as an
+     accounts-app user, a draft journal + balanced lines inserts fine,
+     flipping a journal's `status` to `posted` directly is blocked by RLS,
+     deleting or updating a posted journal fails (guard), a line on another
+     entity's account fails, a both-sided line fails (CHECK); as
+     `service_role`, inserting a journal directly with `status = 'posted'`
+     fails (guard); via the `service_role` RPCs, `fin_post_journal()` on a
+     balanced draft returns journal number 1 and posting the same journal
+     again fails, posting an imbalanced draft fails, `fin_reverse_journal()`
+     on a posted journal returns a new posted journal with swapped lines and
+     reversing the same journal again fails; as a non-accounts user, all
+     three tables return 0 rows; as `authenticated` (even an accounts-role
+     user), calling either RPC directly fails (no EXECUTE grant). See
+     LEDGER_ARCHITECTURE.md, CHART_OF_ACCOUNTS.md and POSTING_ENGINE.md for
+     the full reference behind each check.
+5. **Live verification** of the entities/banking milestone at
    accounts.fundingloop.au once applied: the switcher lists both seeded
    entities plus "All entities" and persists the selection across a reload;
    `/entities`, `/banking`, `/transfers` each drop their amber "not applied
    yet" banner and load real data; the dashboard/bills/float/payroll pages
    correctly scope to the selected entity; the group dashboard's totals stay
    split per currency (never summed across AUD/NPR).
-5. **MFA policy decision**: whether enrollment becomes mandatory per role.
+6. **Live verification** of the ledger foundation at accounts.fundingloop.au
+   once applied: `/ledger` and `/ledger/accounts` drop their amber banner and
+   load real data; a manual journal can be created, saved as a draft, edited,
+   posted (`Save & post` or Post), and reversed end to end; a failed post
+   leaves the draft intact with the error shown honestly.
+7. **MFA policy decision**: whether enrollment becomes mandatory per role.
 
 ## Later (Phase 3+)
 
-- Chart of accounts + journals + posting RPCs (the ledger spine); re-baseline
-  becomes an adjustment journal.
+- Chart of accounts + journals + posting RPCs (the ledger spine). **Delivered
+  at foundation level, 2026-07-11** (authored, not applied - see "Now" and
+  "Next" above): `fin_accounts`/`fin_journals`/`fin_journal_lines` and the
+  two posting RPCs exist and are unit-tested; nothing posts to them yet.
+  Still open: document posting (bills, payroll, revenue all becoming journal
+  sources) and re-baseline becoming an adjustment journal instead of
+  overwriting `float_accounts.starting_float` - see
+  LEDGER_ARCHITECTURE.md's "What future modules will do".
 - Revenue: settled-revenue table + CRM push (service-role webhook with
   idempotency on crm_deal_id).
 - Budgets and forecast snapshots (actual vs forecast reporting).

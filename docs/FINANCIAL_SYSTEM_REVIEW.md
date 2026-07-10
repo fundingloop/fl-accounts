@@ -34,10 +34,11 @@ capabilities cannot be bolted on without schema evolution.
 
 | Capability | Verdict | Why |
 |---|---|---|
-| Multiple legal entities | Now: operational foundation, no ledger | `fin_entities` registry authored 2026-07-11 (**not yet applied**): AU + Nepal seeded, unlimited more addable via `/entities`, entity switcher (Current / All) drives every page, `entity_id` retrofitted onto every existing financial table. Still no per-entity authorisation (any accounts-app user sees every entity - SECURITY.md) and no consolidation/FX (group dashboard totals stay per-currency, never summed). See ENTITY_MODEL.md. |
-| Multiple bank accounts | Now: operational foundation, no ledger | `fin_bank_accounts` registry authored 2026-07-11 (**not yet applied**): per-entity accounts, one-primary-per-entity, masked account numbers, `/banking` CRUD. `current_balance` is finance-maintained (like v1's `starting_float`), not ledger-derived - a "Forecast balance" column exists in the UI but is a placeholder pending Phase 3. See BANK_ACCOUNT_MODEL.md. |
-| Multiple currencies | Not safe | One currency label per float account; changing it relabels history with no conversion (UI now warns). `fin_bank_accounts`/`fin_transfers` add a currency field per row, but still no FX rates, no per-transaction conversion, no reporting currency - the group dashboard and transfers form both refuse to convert, only to warn or subtotal per currency. |
-| Intercompany transfers | Now: workflow only, no ledger | `fin_transfers` authored 2026-07-11 (**not yet applied**): a planned -> in_transit -> settled/cancelled workflow between bank accounts, `is_intercompany` flag when the two accounts belong to different entities, settled-immutable by trigger. Deliberately posts no accounting journals yet - the workflow rows become journal sources once Phase 3's ledger exists. See BANK_ACCOUNT_MODEL.md. |
+| Multiple legal entities | Now: operational foundation, ledger foundation authored but nothing posts yet | `fin_entities` registry authored 2026-07-11 (**not yet applied**): AU + Nepal seeded, unlimited more addable via `/entities`, entity switcher (Current / All) drives every page, `entity_id` retrofitted onto every existing financial table. Still no per-entity authorisation (any accounts-app user sees every entity - SECURITY.md) and no consolidation/FX (group dashboard totals stay per-currency, never summed). See ENTITY_MODEL.md. |
+| Multiple bank accounts | Now: operational foundation, ledger foundation authored but nothing posts yet | `fin_bank_accounts` registry authored 2026-07-11 (**not yet applied**): per-entity accounts, one-primary-per-entity, masked account numbers, `/banking` CRUD. `current_balance` is finance-maintained (like v1's `starting_float`), not ledger-derived - a "Forecast balance" column exists in the UI but is a placeholder pending Phase 3. See BANK_ACCOUNT_MODEL.md. |
+| Double-entry ledger / chart of accounts | Now: foundation authored, not applied, not yet posted to | `fin_accounts`/`fin_journals`/`fin_journal_lines` and the two posting RPCs (`fin_post_journal`, `fin_reverse_journal`) authored 2026-07-11 (**not yet applied**): draft journals are RLS-editable, posted journals and their lines are immutable for every role, a manual journal can be created/posted/reversed via `/ledger`. Nothing in the app posts a document to it yet - bills, float, and payroll balances remain client-computed from raw rows exactly as before; that wiring is a future milestone. See LEDGER_ARCHITECTURE.md, CHART_OF_ACCOUNTS.md and POSTING_ENGINE.md. |
+| Multiple currencies | Not safe | One currency label per float account; changing it relabels history with no conversion (UI now warns). `fin_bank_accounts`/`fin_transfers` add a currency field per row, but still no FX rates, no per-transaction conversion, no reporting currency - the group dashboard and transfers form both refuse to convert, only to warn or subtotal per currency. The ledger's `fin_journal_lines.fx_rate` column is reserved but unused - see LEDGER_ARCHITECTURE.md. |
+| Intercompany transfers | Now: workflow only; ledger foundation exists but transfers don't post to it yet | `fin_transfers` authored 2026-07-11 (**not yet applied**): a planned -> in_transit -> settled/cancelled workflow between bank accounts, `is_intercompany` flag when the two accounts belong to different entities, settled-immutable by trigger. Deliberately posts no accounting journals yet - the workflow rows become journal sources once a future milestone wires transfer posting through the now-authored ledger engine. See BANK_ACCOUNT_MODEL.md and LEDGER_ARCHITECTURE.md. |
 | Payroll history / periods | Partial | Under the 2026-07-11 split-ownership decision, fl-people owns payroll runs and per-employee payslip history (`hr_payroll_runs`/`hr_payroll_items`). fl-accounts holds an immutable finance mirror of each finalised run's totals (`payroll_run_snapshots` - period, SSF/TDS, net; applied to production 2026-07-11, live end-to-end verification outstanding); the `payroll_employees` register remains current-state only and is now explicitly a reference/estimate tool, not history. |
 | Recurring payroll | Partial | Finalised payroll now projects into the cashflow forecast (`lib/payrollForecast.js`): known SSF/TDS remittances and not-yet-paid net wages from real snapshots, plus estimated future months extrapolated from the latest run. Still absent: an fl-accounts-side payroll run of record (superseded by design, not a gap - see ROADMAP). |
 | Recurring expenses | Partial | Recurring bills project occurrences client-side, but with a single `paid` flag there is no per-occurrence payment history; marking the anchor paid just advances the projection. |
@@ -45,18 +46,25 @@ capabilities cannot be bolted on without schema evolution.
 | Budgets / actual-vs-forecast | Not supported | No budget tables; forecasts are ephemeral (recomputed per page view, never persisted), so there is nothing to compare actuals against. |
 | Tax obligations / liabilities | Partial | For finalised runs, SSF payable and TDS now appear in the cashflow forecast with approximate remit dates (day 15/25 of the following month - an AD-calendar convention, not the exact BS-calendar statutory deadline; TECH_DEBT D11). Still not a true liabilities ledger: no due-date table, no accrual entries, SST remains display-only. |
 | Audit history | Now partial | Added and applied to production 2026-07-11: `fl_accounts_audit_log` (append-only, trigger-fed, admin-read) captures every insert/update/delete on the four tables. |
-| Immutable financial history | Not supported by design | All four tables are mutated in place by any accounts-app user; deletes were hard deletes (payroll is now soft-delete; bills/deposits remain hard-delete with audit snapshots). True immutability needs a ledger design. |
+| Immutable financial history | Not supported by v1 tables; ledger foundation authored, unused | All four v1 tables are mutated in place by any accounts-app user; deletes were hard deletes (payroll is now soft-delete; bills/deposits remain hard-delete with audit snapshots). The ledger foundation authored 2026-07-11 provides true document immutability once posted (guard triggers plus a deferred balance backstop for every role) - but nothing writes to it from v1's tables yet, so v1's own history is still mutable exactly as before. |
 | Cashflow forecasting | v1-adequate | Deterministic, well-factored client util; fine at this volume. Will not scale to multi-account/multi-entity (full-table reads per page, no persistence, no payroll/tax inflows-outflows). |
 | Management reporting | Not supported | No period concept, no categories beyond free-text, no persisted aggregates. |
 
 ## Where the current architecture will not scale
 
-1. **No double-entry spine.** Balances are derived by re-summing raw rows on
-   the client. With one account and hundreds of rows this is fine; with many
-   accounts, entities and currencies it becomes both a performance problem
-   (every page pulls `select *` of whole tables) and a correctness problem
-   (nothing reconciles; a bug or a direct PostgREST write silently changes
-   history). A journal/ledger with balanced entries is the standard fix.
+1. **No double-entry spine wired to v1 balances yet.** Balances are still
+   derived by re-summing raw rows on the client. A ledger foundation
+   (`fin_accounts`/`fin_journals`/`fin_journal_lines` plus the posting RPCs)
+   was authored 2026-07-11 (not yet applied - see the capability row above
+   and LEDGER_ARCHITECTURE.md), so the balanced-journal mechanism itself now
+   exists and is enforced server-side. What it does not yet do is *replace*
+   client-side balance math: no document (bill, deposit, payroll run)
+   generates a journal, so bill/float/payroll balances stay client-computed
+   from raw rows exactly as before. With one account and hundreds of rows
+   this is fine; with many accounts, entities and currencies it remains both
+   a performance problem (every page pulls `select *` of whole tables) and a
+   correctness problem (nothing reconciles) until document posting is wired
+   through the new engine.
 2. **The `paid` flag conflates state with history.** "Recurring bill" needs a
    template (definition) + instances (occurrences with their own status and
    payment record). The v1 single-flag model already causes a visible quirk:
@@ -82,10 +90,17 @@ capabilities cannot be bolted on without schema evolution.
 
 ## Recommendations (ranked)
 
-1. Adopt the ledger-centric target schema in
-   [ARCHITECTURE_RECOMMENDATIONS.md](ARCHITECTURE_RECOMMENDATIONS.md) before
-   building revenue, budgets, or the AU entity onto v1 tables. Additive
-   migration path, no rewrite of the running app.
+1. **Foundation delivered 2026-07-11, in fuller form than the sketch
+   (authored, not yet applied).** `fin_accounts`/`fin_journals`/
+   `fin_journal_lines` and the two posting RPCs exist per
+   [LEDGER_ARCHITECTURE.md](LEDGER_ARCHITECTURE.md),
+   [CHART_OF_ACCOUNTS.md](CHART_OF_ACCOUNTS.md) and
+   [POSTING_ENGINE.md](POSTING_ENGINE.md). Still open, per the original
+   recommendation in
+   [ARCHITECTURE_RECOMMENDATIONS.md](ARCHITECTURE_RECOMMENDATIONS.md): wire
+   revenue, budgets, and the rest of the AU entity's document flow through
+   it before building those onto v1 tables directly. Additive migration
+   path, no rewrite of the running app.
 2. **Done, 2026-07-11, in re-scoped form.** Originally: introduce
    `payroll_runs` (+ `payroll_run_lines`) as the first evolution, snapshot
    each period's computed payslips, accrue SSF/TDS liabilities, and feed the

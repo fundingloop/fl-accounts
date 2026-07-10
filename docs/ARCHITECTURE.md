@@ -39,6 +39,16 @@ future/target design is deliberately kept separate in
   virtual entity built from the one legacy `float_accounts` row so the app
   keeps working exactly as it did pre-milestone. See
   [ENTITY_MODEL.md](ENTITY_MODEL.md).
+- **General ledger foundation** (authored, not applied - see below): a
+  double-entry ledger spine (`fin_accounts`, `fin_journals`,
+  `fin_journal_lines`) plus two service-role-only posting RPCs
+  (`fin_post_journal`, `fin_reverse_journal`). Draft journals are
+  RLS-editable; posted journals and their lines are immutable for every
+  role. A new `/ledger` module (Journal Entries, Chart of Accounts) is
+  entity-aware exactly like Banking/Entities. See
+  [LEDGER_ARCHITECTURE.md](LEDGER_ARCHITECTURE.md),
+  [CHART_OF_ACCOUNTS.md](CHART_OF_ACCOUNTS.md) and
+  [POSTING_ENGINE.md](POSTING_ENGINE.md).
 
 ## Auth & authorisation (three layers)
 
@@ -85,6 +95,19 @@ future/target design is deliberately kept separate in
    [BANK_ACCOUNT_MODEL.md](BANK_ACCOUNT_MODEL.md) for the full design; the
    app degrades gracefully via `isMissingSchemaError()` until these are
    applied.
+
+   A third migration, `20260711240000_fin_ledger.sql` (fl-crm ledger,
+   requires the two above applied first), is also authored and committed but
+   **not applied**. It adds `fin_accounts` (per-entity chart of accounts,
+   archive-only, same RLS shape), `fin_journals` / `fin_journal_lines`
+   (double-entry journal headers/lines - draft rows are RLS-editable, posted
+   rows are immutable for every role via guard triggers plus a deferred
+   commit-time balance backstop) and two `service_role`-only posting RPCs,
+   `fin_post_journal()` / `fin_reverse_journal()`. See
+   [LEDGER_ARCHITECTURE.md](LEDGER_ARCHITECTURE.md),
+   [CHART_OF_ACCOUNTS.md](CHART_OF_ACCOUNTS.md) and
+   [POSTING_ENGINE.md](POSTING_ENGINE.md) for the full design; `/ledger` and
+   `/ledger/accounts` degrade gracefully the same way until it is applied.
 3. **Server routes** re-verify role + bill ownership in code before any
    service-role operation.
 
@@ -100,10 +123,16 @@ future/target design is deliberately kept separate in
 | `/banking` | page | `fin_bank_accounts` registry CRUD: add/edit bank accounts per entity, close (not delete), masked account numbers, primary-account flag. Amber banner if the bank account migration is not yet applied (current state). |
 | `/transfers` | page | `fin_transfers` workflow: create a transfer between two bank accounts, advance its status (planned -> in_transit -> settled, or cancel), intercompany badge. Amber banner if not yet applied (current state). |
 | `/entities` | page | `fin_entities` registry CRUD: add/edit entities, archive/restore (no hard delete). Amber banner if not yet applied (current state). |
+| `/ledger` | page | Journal Entries list: filter by status (draft/posted/reversed, reversed derived)/source/date/free text, "New journal". Amber banner if not yet applied (current state). |
+| `/ledger/new` | page | New manual journal (or `?edit=<id>` to edit an existing draft): header + lines editor, live balance indicator, "Save draft" / "Save & post". |
+| `/ledger/[id]` | page | Journal detail: header, lines, reversal linkage (reverses / reversed by), and the actions valid for its state (edit/post/delete for a draft, reverse for a posted un-reversed journal). |
+| `/ledger/accounts` | page | Chart of Accounts, grouped by type: add/edit accounts, archive/restore (no hard delete). Amber banner if not yet applied (current state). |
 | `/security` | page | MFA: enrol authenticator (QR), verify, remove factor. |
 | `POST /api/upload` | route | Attachment upload: role check, bill-ownership check, MIME + magic-byte validation, 15MB cap, service-role storage write, bill update, rollback + replaced-file cleanup. |
 | `GET /api/download` | route | Signed URL (60s) only for a path that exactly matches a real bill's current attachment. |
 | `POST /api/bills/delete` | route | Deletes the bill under the CALLER'S RLS (durable success point), then best-effort removal of its storage files (logged, never faked). |
+| `POST /api/ledger/post` | route | Role gate -> caller-RLS defense-in-depth read (404/409) -> `fin_post_journal()` via the service client -> `friendlyPostingError()` mapping (422 known / 500 unknown). Posting is server-side only - the RPC is not callable by `authenticated`. See [POSTING_ENGINE.md](POSTING_ENGINE.md). |
+| `POST /api/ledger/reverse` | route | Same shape, calls `fin_reverse_journal()`; returns the new reversal journal's id. See [POSTING_ENGINE.md](POSTING_ENGINE.md). |
 
 ## Financial logic
 
@@ -140,12 +169,37 @@ future/target design is deliberately kept separate in
   still ahead of today; estimated future months beyond the latest snapshot
   reuse its figures and its pay-date-to-period-end offset.
   `payrollMonthlyCashCost()` helper for the dashboard note. Unit-tested.
+- `lib/ledger.js` - pure helpers for the `fin_accounts`/`fin_journals`/
+  `fin_journal_lines` general ledger (no Supabase imports, fully
+  unit-tested): account-type metadata (`ACCOUNT_TYPES`,
+  `accountTypeLabel()`, `normalBalanceForType()`), cents-safe totals
+  (`toCents()`, `journalTotals()`), client-side mirroring of the posting
+  RPC's validation (`validateDraftJournal()`), reversal line construction
+  (`buildReversalLines()`), status/action derivation
+  (`journalStatusInfo()`, `nextJournalActions()`), display formatting
+  (`formatJournalNo()`, `sourceTypeLabel()`), list filtering
+  (`filterJournals()`) and chart grouping (`accountsByType()`,
+  `postableAccounts()`). `ledgerSchemaMissing()` wraps
+  `isMissingSchemaError()` for the ledger tables specifically. See
+  [LEDGER_ARCHITECTURE.md](LEDGER_ARCHITECTURE.md),
+  [CHART_OF_ACCOUNTS.md](CHART_OF_ACCOUNTS.md).
+- `lib/ledgerPostingErrors.js` - `friendlyPostingError()` maps a raw Postgres
+  error from `fin_post_journal`/`fin_reverse_journal` into a message safe to
+  show a user: a recognised validation failure (balance, archived/
+  non-postable account, wrong status, cross-entity, currency, already
+  reversed, not authorised) passes through verbatim; anything else becomes a
+  generic message with `known: false`, telling the API route to log the raw
+  error and respond 500 instead of 422. See
+  [POSTING_ENGINE.md](POSTING_ENGINE.md).
 - Derived figures are never persisted; every page recomputes from raw rows.
   Fine at current volume; the scaling limits and the ledger-based successor
   are documented in FINANCIAL_SYSTEM_REVIEW.md. `payroll_run_snapshots` is the
   one exception - an append-only mirror of a value that is sealed at source
   (a finalised fl-people run), so mirroring it is not the same risk as
-  persisting a derived figure that can drift.
+  persisting a derived figure that can drift. The ledger foundation above is
+  authored but not applied, and nothing posts to it yet even once it is -
+  bill/float/payroll balances remain client-computed from raw rows until a
+  future milestone wires document posting through it.
 
 ## Storage
 

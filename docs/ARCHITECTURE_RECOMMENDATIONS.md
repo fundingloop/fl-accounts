@@ -55,6 +55,17 @@ fin_accounts            Chart of accounts (financial accounts, not bank
                         revenue categories, expense categories.
                         (id, entity_id, code, name, type
                          [asset|liability|equity|income|expense], active)
+                        DELIVERED 2026-07-11 (authored, not yet applied -
+                        20260711240000_fin_ledger.sql): richer than this
+                        sketch (8 types incl. cost_of_sales/other_income/
+                        other_expense, free-choice normal_balance for contra
+                        accounts, same-entity parent via composite FK + cycle
+                        guard, postable vs header, per-account currency
+                        override, archive lifecycle, frozen entity/type/
+                        normal_balance once referenced). A starter chart is
+                        seeded for the two entities that existed at authoring
+                        time only - no auto-seed hook for later entities. See
+                        CHART_OF_ACCOUNTS.md.
 
 fin_journals            Posted, immutable journal headers.
                         (id, entity_id, journal_date, description,
@@ -65,6 +76,22 @@ fin_journal_lines       Balanced lines; SUM(debit-credit) per journal = 0,
                         enforced by a deferred constraint trigger.
                         (id, journal_id, account_id, bank_account_id NULL,
                          debit, credit, currency, fx_rate NULL, memo)
+                        DELIVERED 2026-07-11 (authored, not yet applied -
+                        20260711240000_fin_ledger.sql): both tables match
+                        this sketch closely - status is draft/posted only
+                        (no stored 'reversed' status; it is derived from
+                        another journal's reverses_journal_id), journal_no
+                        is assigned gapless per-entity only at POST time
+                        (advisory-lock + max()+1, never client-supplied),
+                        the balance check is a DEFERRABLE INITIALLY DEFERRED
+                        constraint trigger exactly as sketched, and
+                        source_type's vocabulary is reserved but only
+                        manual/reversal are produced this milestone -
+                        nothing posts bills/payroll_run/revenue/transfer/
+                        deposit/rebaseline journals yet. posted_by_name is
+                        also stored (denormalised, since the posting RPC has
+                        no session to join against - see POSTING_ENGINE.md).
+                        See LEDGER_ARCHITECTURE.md and POSTING_ENGINE.md.
 
 fin_transactions        Optional convenience view over journal lines filtered
                         to cash accounts = the bank-account statement view.
@@ -118,20 +145,63 @@ fl_accounts_audit_log   Already live (July 2026): row-level audit journal on
 
 ## Rules the schema must enforce (not the client)
 
+**DELIVERED 2026-07-11 at foundation level for rules 1, 2, 4, 5 (authored,
+not yet applied); rule 3 explicitly NOT built; rule 6 delivered with one
+deviation.** See annotations below and LEDGER_ARCHITECTURE.md /
+POSTING_ENGINE.md for the full detail.
+
 1. Journals balance: deferred trigger rejects unbalanced journals.
+   **Delivered**, and further layered than this one-line rule implies: an
+   RLS policy shape that only ever allows draft rows to be client-written, a
+   guard trigger that blocks the draft-to-posted transition outside the
+   posting RPCs, RPC-level validation before posting, *and* the deferred
+   commit-time trigger this rule names - four independent layers, not one.
+   See LEDGER_ARCHITECTURE.md's "four enforcement layers".
 2. Journals are immutable: no UPDATE/DELETE policies at all; corrections are
-   new journals with `reverses_journal_id` set.
+   new journals with `reverses_journal_id` set. **Delivered**, via guard
+   triggers rather than "no policy at all" - `fin_journals` and
+   `fin_journal_lines` do have UPDATE/DELETE RLS policies, but every one of
+   them is scoped to `status = 'draft'`, and a `BEFORE` guard trigger
+   backstops the same rule for every role including `service_role` (which
+   bypasses RLS but not triggers). Reversal is `fin_reverse_journal()`,
+   producing a new journal with `reverses_journal_id` set exactly as
+   sketched, with `source_type = 'reversal'`.
 3. Period locks: `fin_period_locks (entity_id, locked_through date)`;
-   posting into a locked period is rejected by trigger.
+   posting into a locked period is rejected by trigger. **Not built.** No
+   `fin_period_locks` table exists; `fin_post_journal()`/
+   `fin_reverse_journal()` do not check `journal_date` against anything.
+   There is no closing process yet to protect, since no document module
+   posts to the ledger. See TECH_DEBT.md D18.
 4. Money columns are `numeric(14,2)` with CHECK >= 0 where signs are fixed by
-   the model (debit/credit columns, document amounts).
+   the model (debit/credit columns, document amounts). **Delivered** as
+   specified (`debit`/`credit` are `numeric(14,2) CHECK (>= 0)`, plus a
+   single-sidedness CHECK that also rejects zero-amount lines).
 5. Posting is a Postgres RPC (`fin_post_bill`, `fin_post_payroll_run`, ...)
    run as SECURITY DEFINER after role checks - one transaction covering
    document status change + journal + lines. The browser never assembles a
    journal. This is where operation order / durable success point / rollback
-   live for every multi-step financial operation.
+   live for every multi-step financial operation. **Delivered at the
+   generic-engine level, not yet the per-document level**: `fin_post_journal()`
+   / `fin_reverse_journal()` exist, are `SECURITY DEFINER`, and are
+   `service_role`-only after the calling route's own role check - but there
+   is no `fin_post_bill()`/`fin_post_payroll_run()` yet, because no document
+   module posts through the ledger yet (this milestone ships only manual
+   journal entry). A future document RPC would create its own draft + lines
+   and then call `fin_post_journal()` - see POSTING_ENGINE.md's "What a
+   future module must do to post".
 6. RLS: same `is_accounts_app_user()` boundary for reads; writes only via the
    RPCs (revoke direct INSERT on ledger tables from authenticated).
+   **Delivered for reads and for the posted-status transition specifically,
+   with one deliberate deviation from this rule's literal wording**: reads
+   use the same `is_accounts_app_user()` boundary as sketched, and the
+   `posted` transition genuinely is RPC-only (`authenticated` has no
+   EXECUTE grant on either posting RPC at all). But direct `INSERT`/`UPDATE`/
+   `DELETE` on `fin_journals`/`fin_journal_lines` **is** granted to
+   `authenticated` - scoped by RLS to `status = 'draft'` rows only. This is
+   intentional, not an oversight: a draft is explicitly not a financial
+   record (see LEDGER_ARCHITECTURE.md's design principle), so gating draft
+   CRUD through an RPC would add ceremony without adding integrity - the
+   posting RPC is where the real gate lives.
 
 ## Migration path (additive, no big-bang)
 
@@ -154,8 +224,20 @@ fl_accounts_audit_log   Already live (July 2026): row-level audit journal on
    future `fin_` ledger (steps 3+ below) will consume `payroll_run_snapshots`
    to post payroll journals rather than reading from an fl-accounts-owned
    `payroll_runs` table.
-3. Chart of accounts + journals + posting RPCs; start posting NEW bills and
-   payroll runs; backfill historical paid bills as opening journals.
+3. **Delivered 2026-07-11 at foundation level (authored, not yet applied -
+   20260711240000_fin_ledger.sql)**: chart of accounts + journals + the
+   generic posting/reversal RPCs, per the annotated schema sketch and "Rules
+   the schema must enforce" above. Deviations from this step as originally
+   scoped: no `fin_period_locks` (see rule 3 above, TECH_DEBT.md D18); the
+   posting RPCs are `service_role`-only with an explicit re-verified actor
+   parameter rather than callable by `authenticated` at all (see
+   POSTING_ENGINE.md's "Why p_actor_id is explicit"); and, most
+   significantly, **document posting is not wired yet** - "start posting NEW
+   bills and payroll runs; backfill historical paid bills as opening
+   journals" remains entirely open. This milestone ships the engine and a
+   manual-journal UI only; no bill, payroll run, or historical backfill
+   generates a journal. See LEDGER_ARCHITECTURE.md, CHART_OF_ACCOUNTS.md and
+   POSTING_ENGINE.md.
 4. Revenue table + CRM push (webhook/service-role route with idempotency key
    = crm_deal_id, so retries cannot double-post revenue).
 5. Budgets, forecast snapshots, transfers, AU entity onboarding.

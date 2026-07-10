@@ -76,12 +76,64 @@ accepted debt in [TECH_DEBT.md](TECH_DEBT.md).
     the pre/post verification blocks); until then the app runs its
     pre-migration fallback (a single virtual entity, amber "not applied yet"
     banners on `/entities`, `/banking`, `/transfers`).
+- **General ledger foundation** (authored 2026-07-11, migration **not yet
+  applied** - `20260711240000_fin_ledger.sql`, fl-crm ledger, requires the
+  two migrations above applied first): three more tables, same
+  `is_accounts_app_user()` boundary as every existing fl-accounts table -
+  there is no per-entity partitioning on these either (see "Entity isolation
+  posture" below).
+  - `fin_accounts`: SELECT/INSERT/UPDATE gated on `is_accounts_app_user()`;
+    no DELETE policy; a guard trigger additionally rejects every DELETE, any
+    UPDATE that changes the frozen `entity_id`, and any UPDATE that
+    reclassifies `account_type`/`normal_balance` once a journal line
+    references the account - for every role including `service_role`.
+  - `fin_journals`: drafts are RLS-editable (`INSERT`/`UPDATE`/`DELETE` all
+    require `status = 'draft'`, `UPDATE`'s `WITH CHECK` included, so a client
+    can never flip a row to `posted`); a guard trigger backstops this for
+    every role, rejecting any `UPDATE` or `DELETE` of a posted journal
+    outright and rejecting an `INSERT`/`UPDATE` that sets `status =
+    'posted'` unless a transaction-local flag
+    (`fl_accounts.ledger_posting`) is set - which happens only inside the
+    two posting RPCs. A deferred, commit-time constraint trigger
+    re-verifies every posted journal's balance/currency/entity invariants,
+    backstopping the RPCs themselves, not just client writes.
+  - `fin_journal_lines`: same draft-only RLS shape, keyed off the parent
+    journal's `status`; a guard trigger rejects writes once the parent is
+    posted (for every role) and a validation trigger enforces
+    cross-entity/currency integrity eagerly at write time.
+  - **No client posting path exists.** `fin_post_journal()` and
+    `fin_reverse_journal()` are the only way a journal becomes `posted`;
+    both are `SECURITY DEFINER`, and `EXECUTE` is revoked from `PUBLIC`,
+    `anon` and `authenticated` and granted **only** to `service_role`. Because
+    a service-role call carries no JWT, the acting user is an explicit
+    `p_actor_id` parameter that the calling route supplies after its own
+    role gate, and the RPC independently re-verifies it against
+    `team_members` (active, role in accounts/manager/admin) before doing
+    anything else.
+  - `POST /api/ledger/post` and `POST /api/ledger/reverse` are the only
+    callers: role gate, then a defense-in-depth read of the journal under
+    the caller's own RLS client (404/409), then the RPC call via the
+    service-role client. A recognised RPC failure (balance, wrong status,
+    archived/non-postable account, cross-entity, already reversed, not
+    authorised) is passed to the client verbatim as a 422; anything
+    unrecognised is logged server-side and returned as a generic 500 - same
+    "log internal, return generic" rule as every other route (see standing
+    rule 2 below).
+  - All three tables are audited via `fl_accounts_audit` like every other
+    fl-accounts table.
+  - See [LEDGER_ARCHITECTURE.md](LEDGER_ARCHITECTURE.md),
+    [CHART_OF_ACCOUNTS.md](CHART_OF_ACCOUNTS.md) and
+    [POSTING_ENGINE.md](POSTING_ENGINE.md) for the full design. **Manual
+    action required: apply the migration** (see ROADMAP.md for the pre/post
+    verification blocks); until then `/ledger` and `/ledger/accounts` show
+    the same amber "not applied yet" banner pattern.
 
 ## Entity isolation posture
 
 There is **one accounts-role security boundary today, not a per-entity
 one**: `is_accounts_app_user()` gates every fl-accounts table (including the
-three new `fin_` tables above) uniformly, and RLS does **not** partition
+entity/banking `fin_` tables and the three ledger `fin_` tables above)
+uniformly, and RLS does **not** partition
 access by entity. Any user with the `accounts`/`manager`/`admin` role can
 read and write every entity's rows - a Nepal-only clerk can see AU payroll
 and vice versa, once both entities exist. This is an accepted, explicit gap
