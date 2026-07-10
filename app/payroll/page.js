@@ -5,8 +5,9 @@ import { Plus, Pencil, Trash2, X } from "lucide-react";
 import AppShell from "@/components/AppShell";
 import { createClient } from "@/lib/supabase-browser";
 import { useFloatAccount } from "@/lib/useFloatAccount";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatDate } from "@/lib/format";
 import { computePayroll, payrollTotals, EMPLOYER_SSF_RATE, TOTAL_SSF_RATE } from "@/lib/payroll";
+import { isMissingSchemaError, periodLabel, snapshotCsv } from "@/lib/payrollSnapshots";
 
 const emptyForm = {
   employee_name: "",
@@ -45,6 +46,16 @@ export default function PayrollPage() {
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState(null);
 
+  // Payroll run history - finance snapshots of finalised fl-people runs.
+  // Loaded independently of the float account: the history section has no
+  // dependency on it, and the underlying table/RPC may not exist yet if the
+  // snapshot migration hasn't been applied.
+  const [snapshotRows, setSnapshotRows] = useState([]);
+  const [snapshotLoading, setSnapshotLoading] = useState(true);
+  const [snapshotSchemaMissing, setSnapshotSchemaMissing] = useState(false);
+  const [snapshotError, setSnapshotError] = useState("");
+  const [snapshotNote, setSnapshotNote] = useState("");
+
   const currency = account?.currency || "NPR";
 
   const load = async (accountId) => {
@@ -64,6 +75,65 @@ export default function PayrollPage() {
   useEffect(() => {
     if (account?.id) load(account.id);
   }, [account?.id]);
+
+  // Sync + load payroll run history. Runs the sync RPC first (idempotent -
+  // captures any newly finalised fl-people runs), then reads whatever rows
+  // exist regardless of whether the sync itself succeeded, since reads can
+  // succeed even when the sync call fails for a non-schema reason.
+  const loadSnapshots = async () => {
+    setSnapshotLoading(true);
+    setSnapshotError("");
+    setSnapshotNote("");
+    const supabase = createClient();
+
+    const { data: captured, error: syncErr } = await supabase.rpc("accounts_sync_payroll_snapshots");
+    if (syncErr && isMissingSchemaError(syncErr)) {
+      setSnapshotSchemaMissing(true);
+      setSnapshotRows([]);
+      setSnapshotLoading(false);
+      return;
+    }
+    if (syncErr) {
+      setSnapshotError(syncErr.message);
+    } else if (captured > 0) {
+      setSnapshotNote(`Captured ${captured} new finalised run(s).`);
+    }
+
+    const { data, error: loadErr } = await supabase
+      .from("payroll_run_snapshots")
+      .select("*")
+      .order("period_year", { ascending: false })
+      .order("period_month", { ascending: false });
+
+    if (loadErr && isMissingSchemaError(loadErr)) {
+      setSnapshotSchemaMissing(true);
+      setSnapshotRows([]);
+    } else if (loadErr) {
+      setSnapshotError((prev) => prev || loadErr.message);
+      setSnapshotRows([]);
+    } else {
+      setSnapshotSchemaMissing(false);
+      setSnapshotRows(data || []);
+    }
+    setSnapshotLoading(false);
+  };
+
+  useEffect(() => {
+    loadSnapshots();
+  }, []);
+
+  const downloadSnapshotCsv = () => {
+    const csv = snapshotCsv(snapshotRows);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "payroll-run-history.csv";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   const totals = useMemo(() => payrollTotals(rows), [rows]);
   const preview = useMemo(() => computePayroll(form), [form]);
@@ -129,12 +199,94 @@ export default function PayrollPage() {
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 700, color: "#012E41", margin: 0 }}>Payroll</h1>
           <p style={{ fontSize: 13, color: "#6b7c85", margin: "4px 0 0" }}>
-            Nepal salary register - SSF contribution {Math.round(EMPLOYER_SSF_RATE * 100)}% added to income, {Math.round(TOTAL_SSF_RATE * 100)}% deducted (CIT / SSF), both on basic salary
+            Nepal salary register - SSF contribution {Math.round(EMPLOYER_SSF_RATE * 100)}% added to income, {Math.round(TOTAL_SSF_RATE * 100)}% deducted (CIT / SSF), both on basic salary - register below is a reference/estimate; finalised history comes from fl-people payroll runs
           </p>
         </div>
         <button onClick={openAdd} style={{ display: "flex", alignItems: "center", gap: 6, background: "#2BA99F", color: "#fff", border: "none", borderRadius: 8, padding: "10px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
           <Plus size={16} /> Add employee
         </button>
+      </div>
+
+      {/* Payroll run history - finance snapshots of finalised fl-people runs */}
+      <div style={{ marginTop: 18 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+          <div>
+            <h2 style={{ fontSize: 16, fontWeight: 700, color: "#012E41", margin: 0 }}>Payroll run history</h2>
+            <p style={{ fontSize: 12.5, color: "#6b7c85", margin: "4px 0 0" }}>
+              Immutable finance snapshots of finalised fl-people payroll runs. Figures never change once captured.
+            </p>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {snapshotNote && <span style={{ fontSize: 12, color: "#1E8B82", fontWeight: 600 }}>{snapshotNote}</span>}
+            {!snapshotSchemaMissing && snapshotRows.length > 0 && (
+              <button onClick={downloadSnapshotCsv} style={smallBtnStyle}>Download CSV</button>
+            )}
+            {!snapshotSchemaMissing && (
+              <button onClick={loadSnapshots} disabled={snapshotLoading} style={smallBtnStyle}>Refresh</button>
+            )}
+          </div>
+        </div>
+
+        {snapshotSchemaMissing ? (
+          <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", color: "#92400E", borderRadius: 8, padding: "10px 14px", margin: "12px 0", fontSize: 13 }}>
+            Payroll run history is not live yet - the payroll snapshot migrations have not been applied to the database. The register below still works.
+          </div>
+        ) : (
+          <>
+            {snapshotError && (
+              <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#B91C1C", borderRadius: 8, padding: "10px 14px", margin: "12px 0", fontSize: 13 }}>
+                {snapshotError}
+              </div>
+            )}
+            <div style={{ background: "#fff", borderRadius: 12, boxShadow: "0 1px 3px rgba(0,0,0,.06)", overflow: "hidden", margin: "12px 0" }}>
+              {snapshotLoading ? (
+                <div style={{ padding: 24, color: "#6b7c85", fontSize: 13.5 }}>Loading payroll run history...</div>
+              ) : snapshotRows.length === 0 ? (
+                <div style={{ padding: 24, color: "#8a99a0", fontSize: 13.5 }}>No finalised payroll runs have been captured yet.</div>
+              ) : (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, whiteSpace: "nowrap" }}>
+                    <thead>
+                      <tr style={{ background: "#f6f8f9", textAlign: "left" }}>
+                        <Th>Period</Th>
+                        <Th>Pay date</Th>
+                        <Th align="right">Employees</Th>
+                        <Th align="right">Gross</Th>
+                        <Th align="right">SSF employee</Th>
+                        <Th align="right">SSF employer</Th>
+                        <Th align="right">SSF payable</Th>
+                        <Th align="right">TDS</Th>
+                        <Th align="right">Net</Th>
+                        <Th align="right">Cash cost</Th>
+                        <Th>Finalised</Th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {snapshotRows.map((r) => (
+                        <tr key={r.id} style={{ borderTop: "1px solid #f0f2f3" }}>
+                          <Td style={{ fontWeight: 600, color: "#012E41" }}>{periodLabel(r.period_year, r.period_month)}</Td>
+                          <Td>{formatDate(r.pay_date)}</Td>
+                          <Td align="right">{r.employees_count}</Td>
+                          <Td align="right">{formatCurrency(r.total_gross, r.currency)}</Td>
+                          <Td align="right">{formatCurrency(r.total_ssf_employee, r.currency)}</Td>
+                          <Td align="right">{formatCurrency(r.total_ssf_employer, r.currency)}</Td>
+                          <Td align="right">{formatCurrency(r.total_ssf_payable, r.currency)}</Td>
+                          <Td align="right">{formatCurrency(r.total_tds, r.currency)}</Td>
+                          <Td align="right" style={{ fontWeight: 700, color: "#1E8B82" }}>{formatCurrency(r.total_net, r.currency)}</Td>
+                          <Td align="right" style={{ fontWeight: 600 }}>{formatCurrency(r.total_cash_cost, r.currency)}</Td>
+                          <Td>
+                            {formatDate(r.finalised_at)}
+                            {r.finalised_by_name && <div style={{ fontSize: 11, color: "#8a99a0" }}>{r.finalised_by_name}</div>}
+                          </Td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
       {error && (
@@ -355,4 +507,8 @@ const inputStyle = {
 
 const iconBtnStyle = {
   border: "none", background: "none", cursor: "pointer", color: "#6b7c85", padding: 4,
+};
+
+const smallBtnStyle = {
+  background: "#f2f4f5", color: "#334", border: "none", borderRadius: 7, padding: "7px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
 };
