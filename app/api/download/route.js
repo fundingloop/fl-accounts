@@ -39,7 +39,8 @@ export async function GET(request) {
   const { data, error } = await service.storage.from("account-invoices").createSignedUrl(path, 60);
 
   if (error || !data) {
-    return NextResponse.json({ error: error?.message || "Could not sign URL" }, { status: 500 });
+    console.error("download: could not sign URL", error);
+    return NextResponse.json({ error: "Could not create a download link" }, { status: 500 });
   }
 
   return NextResponse.json({ url: data.signedUrl });
