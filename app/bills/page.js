@@ -119,7 +119,11 @@ export default function BillsPage() {
 
     if (editingId) {
       const { error: err } = await supabase.from("bills").update(payload).eq("id", editingId);
-      if (err) setError(err.message);
+      if (err) {
+        setError(err.message);
+        setSaving(false);
+        return;
+      }
     } else {
       const {
         data: { user },
@@ -129,7 +133,11 @@ export default function BillsPage() {
         account_id: account.id,
         created_by: user?.id || null,
       });
-      if (err) setError(err.message);
+      if (err) {
+        setError(err.message);
+        setSaving(false);
+        return;
+      }
     }
 
     setSaving(false);
@@ -141,11 +149,16 @@ export default function BillsPage() {
     setBusyId(bill.id);
     const supabase = createClient();
     const nextPaid = !bill.paid;
-    const { error: err } = await supabase
+    const { data, error: err } = await supabase
       .from("bills")
       .update({ paid: nextPaid, paid_date: nextPaid ? todayISO() : null })
-      .eq("id", bill.id);
+      .eq("id", bill.id)
+      .eq("paid", bill.paid)
+      .select("id");
     if (err) setError(err.message);
+    else if (!data || data.length === 0) {
+      setError("This bill was changed by someone else - the list has been refreshed, please retry.");
+    }
     await loadBills(account.id);
     setBusyId(null);
   };
@@ -153,9 +166,17 @@ export default function BillsPage() {
   const deleteBill = async (bill) => {
     if (!window.confirm(`Delete "${bill.description}"? This cannot be undone.`)) return;
     setBusyId(bill.id);
-    const supabase = createClient();
-    const { error: err } = await supabase.from("bills").delete().eq("id", bill.id);
-    if (err) setError(err.message);
+    try {
+      const res = await fetch("/api/bills/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bill_id: bill.id }),
+      });
+      const json = await res.json();
+      if (!res.ok) setError(json.error || "Could not delete the bill");
+    } catch (err) {
+      setError(err.message || "Could not delete the bill");
+    }
     await loadBills(account.id);
     setBusyId(null);
   };

@@ -92,6 +92,11 @@ export default function FloatPage() {
   const saveSettings = async (e) => {
     e.preventDefault();
     if (!account?.id) return;
+    if (settingsForm.currency !== account.currency) {
+      if (!window.confirm("Changing the currency does not convert any existing amounts - all bills, deposits and the starting float keep their numbers and are simply relabelled. Continue?")) {
+        return;
+      }
+    }
     setSavingSettings(true);
     setError("");
     const supabase = createClient();
@@ -124,7 +129,11 @@ export default function FloatPage() {
       note: depositForm.note.trim() || null,
       created_by: user?.id || null,
     });
-    if (err) setError(err.message);
+    if (err) {
+      setError(err.message);
+      setSavingDeposit(false);
+      return;
+    }
     setSavingDeposit(false);
     setDepositForm({ deposit_date: todayISO(), amount: "", note: "" });
     loadData(account.id);
@@ -153,7 +162,11 @@ export default function FloatPage() {
         float_as_of_date: todayISO(),
       })
       .eq("id", account.id);
-    if (err) setError(err.message);
+    if (err) {
+      setError(err.message);
+      setRebaselining(false);
+      return;
+    }
     setRebaselining(false);
     setRebaselineOpen(false);
     setRebaselineValue("");

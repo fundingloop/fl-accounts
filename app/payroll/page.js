@@ -54,6 +54,7 @@ export default function PayrollPage() {
       .from("payroll_employees")
       .select("*")
       .eq("account_id", accountId)
+      .eq("active", true)
       .order("employee_name", { ascending: true });
     if (err) setError(err.message);
     else setRows(data || []);
@@ -91,13 +92,21 @@ export default function PayrollPage() {
     for (const k of NUM_FIELDS) payload[k] = Number(form[k]) || 0;
     if (editingId) {
       const { error: err } = await supabase.from("payroll_employees").update(payload).eq("id", editingId);
-      if (err) setError(err.message);
+      if (err) {
+        setError(err.message);
+        setSaving(false);
+        return;
+      }
     } else {
       const { data: { user } } = await supabase.auth.getUser();
       const { error: err } = await supabase.from("payroll_employees").insert({
         ...payload, account_id: account.id, created_by: user?.id || null,
       });
-      if (err) setError(err.message);
+      if (err) {
+        setError(err.message);
+        setSaving(false);
+        return;
+      }
     }
     setSaving(false);
     closeForm();
@@ -105,10 +114,10 @@ export default function PayrollPage() {
   };
 
   const deleteRow = async (r) => {
-    if (!window.confirm(`Remove ${r.employee_name} from payroll? This cannot be undone.`)) return;
+    if (!window.confirm(`Remove ${r.employee_name} from the payroll register? The record is deactivated, not deleted, so history is preserved.`)) return;
     setBusyId(r.id);
     const supabase = createClient();
-    const { error: err } = await supabase.from("payroll_employees").delete().eq("id", r.id);
+    const { error: err } = await supabase.from("payroll_employees").update({ active: false }).eq("id", r.id);
     if (err) setError(err.message);
     await load(account.id);
     setBusyId(null);
