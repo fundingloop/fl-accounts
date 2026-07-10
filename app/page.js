@@ -7,6 +7,8 @@ import AppShell from "@/components/AppShell";
 import { createClient } from "@/lib/supabase-browser";
 import { useFloatAccount } from "@/lib/useFloatAccount";
 import { buildForecast, outstandingTotal, overdueSummary, dueSoonSummary } from "@/lib/forecast";
+import { payrollForecastEvents, payrollMonthlyCashCost } from "@/lib/payrollForecast";
+import { isMissingSchemaError, latestSnapshot } from "@/lib/payrollSnapshots";
 import { formatCurrency, formatDate } from "@/lib/format";
 
 function Card({ label, value, sub, tone }) {
@@ -25,6 +27,13 @@ export default function DashboardPage() {
   const [bills, setBills] = useState([]);
   const [deposits, setDeposits] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // Finalised payroll, read-only mirror for the forecast - this page never
+  // calls the sync RPC (the payroll page owns capturing new runs); it only
+  // reads whatever payroll_run_snapshots rows already exist.
+  const [payrollSnapshots, setPayrollSnapshots] = useState([]);
+  const [payrollSchemaMissing, setPayrollSchemaMissing] = useState(false);
+  const [payrollError, setPayrollError] = useState("");
 
   useEffect(() => {
     if (!account?.id) {
@@ -51,6 +60,35 @@ export default function DashboardPage() {
     };
   }, [account?.id]);
 
+  // Payroll snapshots - independent of the float account, read-only, and
+  // tolerant of the snapshot migration not being applied yet.
+  useEffect(() => {
+    let cancelled = false;
+    const supabase = createClient();
+    supabase
+      .from("payroll_run_snapshots")
+      .select("*")
+      .then(({ data, error: err }) => {
+        if (cancelled) return;
+        if (err && isMissingSchemaError(err)) {
+          setPayrollSchemaMissing(true);
+          setPayrollSnapshots([]);
+        } else if (err) {
+          setPayrollError(err.message || "Could not load payroll run history.");
+          setPayrollSnapshots([]);
+        } else {
+          setPayrollSchemaMissing(false);
+          setPayrollSnapshots(data || []);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const payrollEvents = useMemo(() => payrollForecastEvents({ snapshots: payrollSnapshots }), [payrollSnapshots]);
+  const payrollLatest = useMemo(() => latestSnapshot(payrollSnapshots), [payrollSnapshots]);
+
   const forecast = useMemo(() => {
     if (!account) return null;
     return buildForecast({
@@ -58,8 +96,9 @@ export default function DashboardPage() {
       floatAsOfDate: account.float_as_of_date,
       deposits,
       bills,
+      extraEvents: payrollEvents,
     });
-  }, [account, bills, deposits]);
+  }, [account, bills, deposits, payrollEvents]);
 
   const outstanding = useMemo(() => outstandingTotal(bills), [bills]);
   const overdue = useMemo(() => overdueSummary(bills), [bills]);
@@ -79,6 +118,12 @@ export default function DashboardPage() {
       {accountError && (
         <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#B91C1C", borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 13 }}>
           {accountError}
+        </div>
+      )}
+
+      {payrollError && (
+        <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#B91C1C", borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 13 }}>
+          {payrollError}
         </div>
       )}
 
@@ -181,6 +226,11 @@ export default function DashboardPage() {
                   <Area type="stepAfter" dataKey="balance" stroke="#2BA99F" strokeWidth={2} fill="url(#balanceFill)" />
                 </AreaChart>
               </ResponsiveContainer>
+            </div>
+            <div style={{ fontSize: 12, color: "#8a99a0", padding: "10px 2px 16px" }}>
+              {payrollSchemaMissing || payrollSnapshots.length === 0
+                ? "Payroll is not included in this projection (no finalised payroll runs captured yet)."
+                : `Includes payroll from finalised runs: ~${formatCurrency(payrollMonthlyCashCost(payrollLatest), currency)}/month (net wages + SSF + TDS; remittances approximated at day 15/25 of the following month).`}
             </div>
           </div>
         </>

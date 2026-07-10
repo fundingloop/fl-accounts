@@ -262,6 +262,51 @@ describe("buildForecast - series and lowest", () => {
   });
 });
 
+describe("buildForecast - extraEvents", () => {
+  it("merges extraEvents into the series in date order alongside bills/deposits", () => {
+    const { series, events } = buildForecast({
+      startingFloat: 1000,
+      floatAsOfDate: "2026-07-01",
+      today: "2026-07-01",
+      deposits: [{ id: "d1", deposit_date: "2026-07-20", amount: 100 }],
+      bills: [{ id: "b1", charge_type: "one_off", paid: false, due_date: "2026-07-10", amount: 200 }],
+      extraEvents: [
+        { date: new Date(Date.UTC(2026, 6, 15)), amount: -50, kind: "payroll_ssf", description: "SSF remittance for Jun 2026" },
+      ],
+    });
+
+    expect(events).toHaveLength(3);
+    expect(events.map((e) => e.kind)).toEqual(["bill", "payroll_ssf", "deposit"]);
+
+    // Running balance: 1000 -> bill -200 (07-10) -> extra -50 (07-15) -> deposit +100 (07-20)
+    expect(series[0]).toEqual({ date: "2026-07-01", balance: 1000 });
+    expect(series[1]).toEqual({ date: "2026-07-10", balance: 800 });
+    expect(series[2]).toEqual({ date: "2026-07-15", balance: 750 });
+    expect(series[3]).toEqual({ date: "2026-07-20", balance: 850 });
+  });
+
+  it("lowest point reflects an extraEvents outflow that dips below other events", () => {
+    const { lowest } = buildForecast({
+      startingFloat: 100,
+      floatAsOfDate: "2026-07-01",
+      today: "2026-07-01",
+      deposits: [],
+      bills: [],
+      extraEvents: [
+        { date: new Date(Date.UTC(2026, 6, 5)), amount: -500, kind: "payroll_net", description: "Net wages" },
+      ],
+    });
+    expect(lowest).toEqual({ balance: -400, date: "2026-07-05" });
+  });
+
+  it("an empty extraEvents array changes nothing versus omitting it", () => {
+    const base = { startingFloat: 500, floatAsOfDate: "2026-07-01", today: "2026-07-01", deposits: [], bills: [] };
+    const withoutExtra = buildForecast(base);
+    const withEmptyExtra = buildForecast({ ...base, extraEvents: [] });
+    expect(withEmptyExtra).toEqual(withoutExtra);
+  });
+});
+
 describe("outstandingTotal / overdueSummary / dueSoonSummary", () => {
   const bills = [
     { id: "1", paid: false, due_date: "2026-07-01", amount: 100 }, // overdue vs today 2026-07-11
