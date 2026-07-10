@@ -69,7 +69,7 @@ export default function JournalLinesEditor({ lines, onChange, accounts, currency
                     <option value="">Select account...</option>
                     {accounts.map((a) => (
                       <option key={a.id} value={a.id}>
-                        {a.code} — {a.name}
+                        {a.code} - {a.name}
                       </option>
                     ))}
                   </select>

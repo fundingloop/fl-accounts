@@ -264,7 +264,7 @@ export default function ChartOfAccountsPage() {
                 <Field label="Parent account" hint="optional">
                   <select value={form.parent_id} onChange={(e) => setForm({ ...form, parent_id: e.target.value })} style={inputStyle}>
                     <option value="">None</option>
-                    {parentOptions.map((a) => <option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}
+                    {parentOptions.map((a) => <option key={a.id} value={a.id}>{a.code} - {a.name}</option>)}
                   </select>
                 </Field>
                 <Field label="Currency" hint="optional, 3 letters - blank = entity default">
