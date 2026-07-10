@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { LayoutDashboard, Receipt, Wallet, Users, ShieldCheck, LogOut } from "lucide-react";
 import { createClient } from "@/lib/supabase-browser";
+import EntitySwitcher from "@/components/EntitySwitcher";
 
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard", Icon: LayoutDashboard },
@@ -41,8 +42,10 @@ export default function AppShell({ children }) {
       >
         <div style={{ padding: "22px 20px 18px", borderBottom: "1px solid rgba(255,255,255,.1)" }}>
           <div style={{ fontSize: 18, fontWeight: 700, letterSpacing: ".2px" }}>FL Accounts</div>
-          <div style={{ fontSize: 11, color: "#9fc4c0", marginTop: 2 }}>Nepal cashflow</div>
+          <div style={{ fontSize: 11, color: "#9fc4c0", marginTop: 2 }}>Multi-entity finance</div>
         </div>
+
+        <EntitySwitcher />
 
         <nav style={{ flex: 1, padding: "14px 10px" }}>
           {NAV_ITEMS.map(({ href, label, Icon }) => {
