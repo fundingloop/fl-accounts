@@ -37,6 +37,60 @@ accepted debt in [TECH_DEBT.md](TECH_DEBT.md).
   (period + totals) only - no per-employee hr data ever crosses into
   fl-accounts. Every snapshot insert is captured in `fl_accounts_audit_log`
   like any other fl-accounts financial write.
+- **Multi-entity foundation** (authored 2026-07-11, migrations **not yet
+  applied** - `20260711220000_fin_entities.sql` then
+  `20260711230000_fin_bank_accounts.sql`, fl-crm ledger): three new tables,
+  same `is_accounts_app_user()` boundary as every existing fl-accounts
+  table.
+  - `fin_entities`: SELECT/INSERT/UPDATE gated on `is_accounts_app_user()`;
+    no DELETE policy; a guard trigger additionally rejects every DELETE and
+    any UPDATE that changes the frozen `code` column, for every role
+    including `service_role` (triggers fire regardless of RLS bypass).
+  - `fin_bank_accounts`: same SELECT/INSERT/UPDATE shape; a guard trigger
+    rejects DELETE (close via `status='closed'` instead) and any UPDATE that
+    moves the row's `entity_id` to a different entity.
+  - `fin_transfers`: a single `FOR ALL` policy gated on
+    `is_accounts_app_user()` covering SELECT/INSERT/UPDATE/DELETE; a guard
+    trigger derives `from_entity_id`/`to_entity_id` from the bank accounts
+    (never client-supplied), enforces the `planned -> in_transit -> settled
+    | cancelled` status machine, makes a settled transfer immutable (no
+    further UPDATE, for every role), and restricts DELETE to
+    planned/cancelled rows only.
+  - `entity_id` is retrofitted (NOT NULL) onto `float_accounts`, `bills`,
+    `float_deposits`, `payroll_employees` and `payroll_run_snapshots`; a
+    derive trigger fills it from the parent float account when a caller
+    omits it (keeping an already-deployed app version working) and rejects
+    it outright when a caller supplies a value that contradicts the parent's
+    entity (cross-entity rows are refused, not silently corrected).
+    `accounts_sync_payroll_snapshots()` is re-created to stamp `entity_id`
+    and now refuses to capture a run whose `entity_code` has no registered
+    `fin_entities` row.
+  - **Account number masking**: `fin_bank_accounts.account_number` is stored
+    in full (a payment routing detail, same sensitivity class as a BSB, not
+    a secret credential) and is always rendered masked in the UI
+    (`maskAccountNumber()` - last 4 digits only). RLS still restricts reads
+    of the underlying row to accounts-app users regardless.
+  - See [ENTITY_MODEL.md](ENTITY_MODEL.md) and
+    [BANK_ACCOUNT_MODEL.md](BANK_ACCOUNT_MODEL.md) for the full design.
+    **Manual action required: apply both migrations** (see ROADMAP.md for
+    the pre/post verification blocks); until then the app runs its
+    pre-migration fallback (a single virtual entity, amber "not applied yet"
+    banners on `/entities`, `/banking`, `/transfers`).
+
+## Entity isolation posture
+
+There is **one accounts-role security boundary today, not a per-entity
+one**: `is_accounts_app_user()` gates every fl-accounts table (including the
+three new `fin_` tables above) uniformly, and RLS does **not** partition
+access by entity. Any user with the `accounts`/`manager`/`admin` role can
+read and write every entity's rows - a Nepal-only clerk can see AU payroll
+and vice versa, once both entities exist. This is an accepted, explicit gap
+for this milestone: per-entity authorisation (a membership table consumed by
+RLS, as recommended in ARCHITECTURE_RECOMMENDATIONS.md's non-schema
+recommendations) remains a Phase 3+ roadmap item. Until then, cross-entity
+access is an **application-level** concern (the entity switcher scopes what
+a user is *shown*, not what they are *authorised* to see) - not a database
+one.
 
 ## Findings register
 

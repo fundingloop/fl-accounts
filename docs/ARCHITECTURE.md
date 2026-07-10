@@ -29,6 +29,16 @@ future/target design is deliberately kept separate in
   server routes.
 - CI: GitHub Actions (`.github/workflows/ci.yml`) runs the full gate (npm ci,
   test, lint, build) on every push and pull request.
+- **Multi-entity foundation** (authored, not applied - see below): a root
+  `EntityProvider` (`lib/useEntities.js`, mounted via
+  `components/Providers.js`) loads the `fin_entities` registry once and
+  exposes `currentEntity` / `allSelected` / `selection` to every page.
+  `EntitySwitcher` (rendered in `AppShell`'s sidebar) lets a user pick one
+  entity or "All entities", persisted to `localStorage`. Pre-migration, or
+  when "All entities" is selected, the provider falls back to a single
+  virtual entity built from the one legacy `float_accounts` row so the app
+  keeps working exactly as it did pre-milestone. See
+  [ENTITY_MODEL.md](ENTITY_MODEL.md).
 
 ## Auth & authorisation (three layers)
 
@@ -55,6 +65,26 @@ future/target design is deliberately kept separate in
    an in-place edit. Live since 2026-07-11 (post-apply verification passed);
    live end-to-end verification at accounts.fundingloop.au is still
    outstanding.
+
+   **Not yet live**: two further migrations,
+   `20260711220000_fin_entities.sql` and
+   `20260711230000_fin_bank_accounts.sql` (fl-crm ledger, apply order
+   matters - the second has FKs to the first's `fin_entities`), are authored
+   and committed to the ledger but **not applied** to the production
+   Supabase project. They add `fin_entities` (legal entity registry, RLS
+   gated on `is_accounts_app_user()`, no DELETE policy, archive-only via a
+   guard trigger that fires for every role including `service_role`),
+   `fin_bank_accounts` (per-entity bank account registry, same RLS shape,
+   close-not-delete guard, frozen `entity_id`) and `fin_transfers` (transfer
+   workflow between bank accounts, `FOR ALL` policy gated on
+   `is_accounts_app_user()`, settled-immutable by trigger), plus a NOT NULL
+   `entity_id` retrofit onto `float_accounts`/`bills`/`float_deposits`/
+   `payroll_employees`/`payroll_run_snapshots` with a derive-trigger that
+   keeps an already-deployed app version working. See
+   [ENTITY_MODEL.md](ENTITY_MODEL.md) and
+   [BANK_ACCOUNT_MODEL.md](BANK_ACCOUNT_MODEL.md) for the full design; the
+   app degrades gracefully via `isMissingSchemaError()` until these are
+   applied.
 3. **Server routes** re-verify role + bill ownership in code before any
    service-role operation.
 
@@ -63,10 +93,13 @@ future/target design is deliberately kept separate in
 | Route | Kind | Purpose |
 |---|---|---|
 | `/login` | page | Password sign-in, then TOTP challenge when the account has a verified factor. Shows access-denied and MFA-pending states. |
-| `/` | page | Dashboard: current float, outstanding/overdue/due-soon cards, 6-month forecast chart. Read-only load of `payroll_run_snapshots` (never syncs) folds finalised payroll into the chart, with an honest note stating whether payroll is included. |
-| `/bills` | page | Bills CRUD, paid toggle (compare-and-set), attachment upload/view, filters, totals. |
-| `/float` | page | Float settings, deposits, reconciliation, re-baseline to actual. |
-| `/payroll` | page | Nepal SSF salary register (Rigo-matched maths, reference/estimate only), soft-delete offboarding. Payroll run history section: auto-syncs and lists finance snapshots of finalised fl-people runs, with CSV download; falls back to an amber banner instead as a graceful-degradation path if the snapshot schema were ever missing (not the current state - the migrations are applied). |
+| `/` | page | Dashboard: single-entity view (current float, outstanding/overdue/due-soon cards, 6-month forecast chart, forecast summary card, upcoming payroll/bills/tax/transfers) when one entity is selected; a group view (per-entity cards + per-currency-only group totals, never summed across currencies) when "All entities" is selected. Read-only load of `payroll_run_snapshots` (never syncs) folds finalised payroll into the chart, with an honest note stating whether payroll is included. See [FORECAST_MODEL.md](FORECAST_MODEL.md). |
+| `/bills` | page | Bills CRUD, paid toggle (compare-and-set), attachment upload/view, filters, totals. Entity-aware: single-entity view scoped to the selected entity's float account, or an all-entities view. |
+| `/float` | page | Float settings, deposits, reconciliation, re-baseline to actual. Entity-aware via `useFloatAccount()`. |
+| `/payroll` | page | Nepal SSF salary register (Rigo-matched maths, reference/estimate only), soft-delete offboarding. Payroll run history section: auto-syncs and lists finance snapshots of finalised fl-people runs, with CSV download; falls back to an amber banner instead as a graceful-degradation path if the snapshot schema were ever missing (not the current state - the migrations are applied). Entity-aware: scoped to the selected entity, or shows an Entity column across all when "All entities" is selected. |
+| `/banking` | page | `fin_bank_accounts` registry CRUD: add/edit bank accounts per entity, close (not delete), masked account numbers, primary-account flag. Amber banner if the bank account migration is not yet applied (current state). |
+| `/transfers` | page | `fin_transfers` workflow: create a transfer between two bank accounts, advance its status (planned -> in_transit -> settled, or cancel), intercompany badge. Amber banner if not yet applied (current state). |
+| `/entities` | page | `fin_entities` registry CRUD: add/edit entities, archive/restore (no hard delete). Amber banner if not yet applied (current state). |
 | `/security` | page | MFA: enrol authenticator (QR), verify, remove factor. |
 | `POST /api/upload` | route | Attachment upload: role check, bill-ownership check, MIME + magic-byte validation, 15MB cap, service-role storage write, bill update, rollback + replaced-file cleanup. |
 | `GET /api/download` | route | Signed URL (60s) only for a path that exactly matches a real bill's current attachment. |
@@ -81,7 +114,11 @@ future/target design is deliberately kept separate in
   array (already clipped to [today, horizon] by the caller) that is
   concatenated with bill/deposit events before the sort - a generic hook so
   other projections (payroll) can feed the same series without
-  `computeCurrentBalance()` changing. Unit-tested.
+  `computeCurrentBalance()` changing. Also exports `forecastSummary()`, a
+  pure aggregation of a forecast's `events` into opening/income/expenses/
+  payroll/tax/closing/other buckets, powering the dashboard's forecast
+  summary card and the group view's per-entity "forecast closing" figure.
+  Unit-tested. See [FORECAST_MODEL.md](FORECAST_MODEL.md).
 - `lib/payroll.js` - Nepal SSF payslip maths matching Rigo HR exactly
   (contribution base = basic only; employer 20% grossed up into income; full
   31% deducted). Unit-tested against the Rigo worked example. Powers the
@@ -91,8 +128,10 @@ future/target design is deliberately kept separate in
   mirror: `isMissingSchemaError()` (a resilience guard - distinguishes a
   missing-schema error from a real error, so the UI can degrade gracefully
   if the snapshot schema were ever absent), `periodLabel()`,
-  `latestSnapshot()`, `snapshotCsv()`
-  (RFC-4180). Unit-tested.
+  `latestSnapshot()`, `snapshotCsv()` (RFC-4180), and `snapshotsForEntity()`
+  (scopes snapshot rows to the selected entity via `entity_id`, falling back
+  to `entity_code` for rows written before the `entity_id` retrofit).
+  Unit-tested.
 - `lib/payrollForecast.js` - projects `payroll_run_snapshots` rows into
   `buildForecast()`'s `extraEvents`: known liabilities per finalised period
   (SSF payable on day 15, TDS on day 25 of the following month - a documented

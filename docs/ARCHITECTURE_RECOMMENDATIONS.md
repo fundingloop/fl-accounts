@@ -31,10 +31,23 @@ arithmetic over raw documents.
 fin_entities            Legal entities: Funding Loop Pty Ltd (AU),
                         Nepal operations, future.
                         (id, name, country, functional_currency, active)
+                        DELIVERED 2026-07-11 (authored, not yet applied -
+                        20260711220000_fin_entities.sql): richer than this
+                        sketch (code join key, country/timezone/FY start,
+                        payroll calendar default, registration/tax id,
+                        archive lifecycle). See ENTITY_MODEL.md.
 
 fin_bank_accounts       Real-world cash locations, per entity.
                         (id, entity_id, name, currency, is_float, active)
                         v1 float_accounts rows map 1:1 onto these.
+                        DELIVERED 2026-07-11 (authored, not yet applied -
+                        20260711230000_fin_bank_accounts.sql): registry only,
+                        not yet wired as float_accounts' successor -
+                        float_accounts still holds the baseline/forecast
+                        inputs the app reads; fin_bank_accounts is a parallel
+                        registry (balances, primary flag, masking) that bills
+                        can now point at via bank_account_id. Unifying the
+                        two is still Phase 3. See BANK_ACCOUNT_MODEL.md.
 
 fin_accounts            Chart of accounts (financial accounts, not bank
                         accounts): cash, AP, AR, salary expense, SSF payable,
@@ -78,6 +91,15 @@ fin_documents           -- one table per document type, all posting to the ledge
                          _account_id, to_bank_account_id, amounts, fx_rate,
                          status, posted_journal_id) - posts intercompany
                          receivable/payable lines when entities differ.
+                         DELIVERED 2026-07-11 in workflow form (authored, not
+                         yet applied - 20260711230000_fin_bank_accounts.sql):
+                         status machine (planned/in_transit/settled/
+                         cancelled), settled-immutable, derived
+                         from/to_entity_id, is_intercompany flag. Still
+                         missing from this sketch: fx_rate and
+                         posted_journal_id - no journals post yet (Phase 3),
+                         and rows are single-currency (no FX conversion).
+                         See BANK_ACCOUNT_MODEL.md.
 
 fin_budgets             (id, entity_id, name, period [month], account_id,
                          amount, currency) - budget vs ledger actuals is then
@@ -113,9 +135,15 @@ fl_accounts_audit_log   Already live (July 2026): row-level audit journal on
 
 ## Migration path (additive, no big-bang)
 
-1. `fin_entities` + `fin_bank_accounts`; backfill Nepal from float_accounts;
-   add nullable `entity_id` to existing tables. App keeps reading
-   float_accounts (now a compatibility view or a synced row).
+1. **Delivered 2026-07-11, in fuller form than this sketch (authored, not
+   yet applied)**: `fin_entities` + `fin_bank_accounts` (+ `fin_transfers`
+   workflow), Nepal backfilled from float_accounts, `entity_id` added to
+   every existing financial table - NOT NULL rather than nullable, backed by
+   a derive-trigger instead of app-side backfill logic, so an
+   already-deployed app version keeps working unmodified. App keeps reading
+   `float_accounts` directly (not yet a compatibility view - that unification
+   is still open, see the `fin_bank_accounts` note above). See
+   ENTITY_MODEL.md and BANK_ACCOUNT_MODEL.md.
 2. **Superseded by the split-ownership decision (Kenneth, 2026-07-11).**
    `payroll_runs`/`payroll_run_lines` are not built in fl-accounts: fl-people
    owns runs and payslip history (`hr_payroll_runs`/`hr_payroll_items`), and

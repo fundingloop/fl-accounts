@@ -4,6 +4,9 @@
 |---|---|
 | [README.md](README.md) | What this app is, how to run it, database rules. |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Current system design: auth layers, routes, RLS, storage, financial logic, operational invariants. |
+| [docs/ENTITY_MODEL.md](docs/ENTITY_MODEL.md) | The `fin_entities` legal entity registry: columns, frozen code join key, archive-only lifecycle, `entity_id` retrofit, entity switcher UX. Authored, not yet applied. |
+| [docs/BANK_ACCOUNT_MODEL.md](docs/BANK_ACCOUNT_MODEL.md) | The `fin_bank_accounts` registry and `fin_transfers` workflow: registry-not-ledger framing, masking, transfer status machine, intercompany transfers. Authored, not yet applied. |
+| [docs/FORECAST_MODEL.md](docs/FORECAST_MODEL.md) | How the cashflow forecast is computed: `buildForecast`, `forecastSummary`, payroll events, per-entity scoping, group view per-currency rules. |
 | [docs/SECURITY.md](docs/SECURITY.md) | July 2026 security review: model, full ranked findings register with remediation status, standing rules for contributors. |
 | [docs/FINANCIAL_SYSTEM_REVIEW.md](docs/FINANCIAL_SYSTEM_REVIEW.md) | Assessment of v1 as a finance system: capability matrix, scaling limits, ranked recommendations. |
 | [docs/ARCHITECTURE_RECOMMENDATIONS.md](docs/ARCHITECTURE_RECOMMENDATIONS.md) | Target ledger-centric schema (entities, journals, payroll runs, revenue, budgets) and the additive migration path. Recommendation only - not implemented. |

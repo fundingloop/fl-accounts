@@ -35,6 +35,25 @@ multi-entity finance system described in
   accounts.fundingloop.au is still outstanding (see "Next" below). See
   FINANCIAL_SYSTEM_REVIEW.md and SECURITY.md for the reassessed capability
   rows and security boundary.
+- **Entities and bank accounts** (commits `bc369fa`, `4757972`, `2094004`,
+  2026-07-11): done at the schema/app level. `fin_entities` (legal entity
+  registry, Funding Loop Pty Ltd/AU + Funding Loop Nepal/NP seeded),
+  `fin_bank_accounts` (per-entity bank account registry) and `fin_transfers`
+  (transfer workflow incl. intercompany) authored as
+  `20260711220000_fin_entities.sql` then
+  `20260711230000_fin_bank_accounts.sql` (fl-crm ledger, apply order
+  matters), with an `entity_id` retrofit onto every existing financial
+  table. New pages `/entities`, `/banking`, `/transfers`; a persistent
+  entity switcher (Current / All entities) in `AppShell`; the dashboard,
+  bills, float and payroll pages are all entity-aware (single-entity view or
+  an all-entities group view); `forecastSummary()` and `snapshotsForEntity()`
+  added with unit tests. **Both migrations are committed to the fl-crm
+  ledger but NOT YET APPLIED to the production Supabase project** - the app
+  runs its pre-migration fallback (a single virtual Nepal entity; amber
+  "migration not applied yet" banners on `/entities`, `/banking`,
+  `/transfers`) until they are. See ENTITY_MODEL.md and
+  BANK_ACCOUNT_MODEL.md for the full design; "Next" below for the apply
+  plan.
 
 ## Next (Phase 2 - first platform increments)
 
@@ -58,9 +77,47 @@ multi-entity finance system described in
    follow-on: once live verification (item 1 above) is complete, revisit
    whether the forecast's AD-calendar remit-date approximation
    (TECH_DEBT D11) needs tightening.
-3. **Entities and bank accounts**: `fin_entities` + `fin_bank_accounts`,
-   account switcher in the UI, Nepal backfill. Unblocks the AU entity.
-4. **MFA policy decision**: whether enrollment becomes mandatory per role.
+3. **Apply the entity + bank account migrations**: schema/app work is done
+   (see "Now" above) but `20260711220000_fin_entities.sql` and
+   `20260711230000_fin_bank_accounts.sql` are not yet applied to the
+   production Supabase project. Apply in that order (`supabase db push`) and
+   run each migration's own pre-apply / post-apply blocks:
+   - Pre-apply (fin_entities): confirm `fin_entities` does not exist yet,
+     `float_accounts`/`payroll_run_snapshots` do, the three shared RLS
+     helper functions exist, every existing `payroll_run_snapshots.entity_code`
+     is one of `fl-nepal`/`fl-au` (0 rows otherwise), and there are no
+     orphaned `bills`/`float_deposits` referencing a missing float account.
+   - Post-apply (fin_entities): `fin_entities` has exactly the two seeded
+     rows (`fl-au`, `fl-nepal`, both active); `entity_id` is NOT NULL and
+     fully backfilled on all five retrofitted tables (0 NULLs each); the
+     `payroll_run_snapshots` append-only guard is re-enabled
+     (`tgenabled = 'O'`); as an accounts-app user, inserting a bill without
+     `entity_id` inherits the float account's entity, inserting one with a
+     contradicting `entity_id` is rejected, deleting an entity is rejected,
+     renaming an entity's `code` is rejected; as a non-accounts user,
+     `fin_entities` returns 0 rows.
+   - Pre-apply (fin_bank_accounts): confirm `fin_entities` now exists and
+     `fin_bank_accounts`/`fin_transfers` do not yet; confirm `bills` has
+     neither `bank_account_id` nor `vendor` yet.
+   - Post-apply (fin_bank_accounts): `fin_bank_accounts`/`fin_transfers`
+     exist with their expected triggers; as an accounts-app user, a second
+     `is_primary=true` bank account for the same entity is rejected
+     (unique violation), deleting a bank account is rejected, moving one to
+     another entity is rejected, a transfer's `is_intercompany` and derived
+     entity ids are correct, settling a transfer then updating it again is
+     rejected, deleting a settled transfer is rejected, pointing a bill's
+     `bank_account_id` at another entity's account is rejected; as a
+     non-accounts user, both new tables return 0 rows.
+   See ENTITY_MODEL.md and BANK_ACCOUNT_MODEL.md for the full column/trigger
+   reference behind each check.
+4. **Live verification** of the entities/banking milestone at
+   accounts.fundingloop.au once applied: the switcher lists both seeded
+   entities plus "All entities" and persists the selection across a reload;
+   `/entities`, `/banking`, `/transfers` each drop their amber "not applied
+   yet" banner and load real data; the dashboard/bills/float/payroll pages
+   correctly scope to the selected entity; the group dashboard's totals stay
+   split per currency (never summed across AUD/NPR).
+5. **MFA policy decision**: whether enrollment becomes mandatory per role.
 
 ## Later (Phase 3+)
 

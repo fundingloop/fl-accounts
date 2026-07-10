@@ -1,10 +1,20 @@
 # fl-accounts
 
-Funding Loop's internal finance app - today: Nepal accounts payable, float
-tracking, cashflow forecasting, the SSF payroll register and a read-only
+Funding Loop's internal finance app - today: multi-entity accounts payable,
+float tracking, cashflow forecasting, the SSF payroll register, a read-only
 mirror of finalised fl-people payroll runs (payroll history + payroll in the
-forecast). Long-term: the company-wide finance and operations platform (see
-[docs/ROADMAP.md](docs/ROADMAP.md)).
+forecast), a bank account registry and a transfer workflow (including
+intercompany transfers). Long-term: the company-wide finance and operations
+platform (see [docs/ROADMAP.md](docs/ROADMAP.md)).
+
+Pages: Dashboard, Bills, Float, Payroll, Banking, Transfers, Entities,
+Security - each entity-aware via a persistent entity switcher (Current /
+All entities). The entity, bank account and transfer schema
+(`fin_entities`, `fin_bank_accounts`, `fin_transfers`) is authored and
+committed to the fl-crm ledger but **not yet applied** to production - see
+[docs/ENTITY_MODEL.md](docs/ENTITY_MODEL.md) and
+[docs/BANK_ACCOUNT_MODEL.md](docs/BANK_ACCOUNT_MODEL.md). Until it is
+applied, the app degrades gracefully to a single virtual Nepal entity.
 
 - **Live**: accounts.fundingloop.au (own Vercel project)
 - **Stack**: Next.js 14 App Router (plain JS), Supabase (shared project with
@@ -50,6 +60,14 @@ Tables: `float_accounts`, `bills`, `float_deposits`, `payroll_employees`,
 fl-people payroll runs (`hr_payroll_runs`/`hr_payroll_items` - owned by
 fl-people, not this app) - see ARCHITECTURE.md. Storage: private
 `account-invoices` bucket, server-route access only.
+
+Two further tables are authored in the ledger but **not yet applied**:
+`fin_entities` (legal entity registry) and `fin_bank_accounts` /
+`fin_transfers` (bank account registry + transfer workflow), plus an
+`entity_id` retrofit onto `float_accounts`/`bills`/`float_deposits`/
+`payroll_employees`/`payroll_run_snapshots`. See
+[docs/ENTITY_MODEL.md](docs/ENTITY_MODEL.md) and
+[docs/BANK_ACCOUNT_MODEL.md](docs/BANK_ACCOUNT_MODEL.md).
 
 ## Documentation
 

@@ -34,16 +34,16 @@ capabilities cannot be bolted on without schema evolution.
 
 | Capability | Verdict | Why |
 |---|---|---|
-| Multiple legal entities | Not supported | No entity concept at all. `float_accounts.name` is the closest thing. Adding rows "works" but every page hardcodes the first account (`useFloatAccount` takes the oldest row). |
-| Multiple bank accounts | Partial (schema), No (app) | `account_id` is threaded through every table (good foresight), but the UI resolves exactly one account and has no switcher. |
-| Multiple currencies | Not safe | One currency label per account; changing it relabels history with no conversion (UI now warns). No FX rates, no per-transaction currency, no reporting currency. |
+| Multiple legal entities | Now: operational foundation, no ledger | `fin_entities` registry authored 2026-07-11 (**not yet applied**): AU + Nepal seeded, unlimited more addable via `/entities`, entity switcher (Current / All) drives every page, `entity_id` retrofitted onto every existing financial table. Still no per-entity authorisation (any accounts-app user sees every entity - SECURITY.md) and no consolidation/FX (group dashboard totals stay per-currency, never summed). See ENTITY_MODEL.md. |
+| Multiple bank accounts | Now: operational foundation, no ledger | `fin_bank_accounts` registry authored 2026-07-11 (**not yet applied**): per-entity accounts, one-primary-per-entity, masked account numbers, `/banking` CRUD. `current_balance` is finance-maintained (like v1's `starting_float`), not ledger-derived - a "Forecast balance" column exists in the UI but is a placeholder pending Phase 3. See BANK_ACCOUNT_MODEL.md. |
+| Multiple currencies | Not safe | One currency label per float account; changing it relabels history with no conversion (UI now warns). `fin_bank_accounts`/`fin_transfers` add a currency field per row, but still no FX rates, no per-transaction conversion, no reporting currency - the group dashboard and transfers form both refuse to convert, only to warn or subtotal per currency. |
+| Intercompany transfers | Now: workflow only, no ledger | `fin_transfers` authored 2026-07-11 (**not yet applied**): a planned -> in_transit -> settled/cancelled workflow between bank accounts, `is_intercompany` flag when the two accounts belong to different entities, settled-immutable by trigger. Deliberately posts no accounting journals yet - the workflow rows become journal sources once Phase 3's ledger exists. See BANK_ACCOUNT_MODEL.md. |
 | Payroll history / periods | Partial | Under the 2026-07-11 split-ownership decision, fl-people owns payroll runs and per-employee payslip history (`hr_payroll_runs`/`hr_payroll_items`). fl-accounts holds an immutable finance mirror of each finalised run's totals (`payroll_run_snapshots` - period, SSF/TDS, net; applied to production 2026-07-11, live end-to-end verification outstanding); the `payroll_employees` register remains current-state only and is now explicitly a reference/estimate tool, not history. |
 | Recurring payroll | Partial | Finalised payroll now projects into the cashflow forecast (`lib/payrollForecast.js`): known SSF/TDS remittances and not-yet-paid net wages from real snapshots, plus estimated future months extrapolated from the latest run. Still absent: an fl-accounts-side payroll run of record (superseded by design, not a gap - see ROADMAP). |
 | Recurring expenses | Partial | Recurring bills project occurrences client-side, but with a single `paid` flag there is no per-occurrence payment history; marking the anchor paid just advances the projection. |
 | Recurring revenue | Not supported | No revenue tables. Deposits are untyped inflows. |
 | Budgets / actual-vs-forecast | Not supported | No budget tables; forecasts are ephemeral (recomputed per page view, never persisted), so there is nothing to compare actuals against. |
 | Tax obligations / liabilities | Partial | For finalised runs, SSF payable and TDS now appear in the cashflow forecast with approximate remit dates (day 15/25 of the following month - an AD-calendar convention, not the exact BS-calendar statutory deadline; TECH_DEBT D11). Still not a true liabilities ledger: no due-date table, no accrual entries, SST remains display-only. |
-| Intercompany transfers | Not supported | Single-entity model; a transfer would be a deposit with a note. |
 | Audit history | Now partial | Added and applied to production 2026-07-11: `fl_accounts_audit_log` (append-only, trigger-fed, admin-read) captures every insert/update/delete on the four tables. |
 | Immutable financial history | Not supported by design | All four tables are mutated in place by any accounts-app user; deletes were hard deletes (payroll is now soft-delete; bills/deposits remain hard-delete with audit snapshots). True immutability needs a ledger design. |
 | Cashflow forecasting | v1-adequate | Deterministic, well-factored client util; fine at this volume. Will not scale to multi-account/multi-entity (full-table reads per page, no persistence, no payroll/tax inflows-outflows). |
@@ -71,8 +71,14 @@ capabilities cannot be bolted on without schema evolution.
    tested, but nothing persists a payroll run, so there is no NPR liability
    trail (SSF payable, TDS payable), no payslip history, and no payroll line
    in the forecast.
-5. **Entity/account/currency conflation** (see table above) blocks the AU
-   entity, intercompany and consolidation outright.
+5. **Entity/account/currency conflation is now addressed at the operational
+   layer, not the ledger layer.** The `fin_entities`/`fin_bank_accounts`/
+   `fin_transfers` foundation (authored 2026-07-11, not yet applied - see
+   table above) unblocks the AU entity, multiple bank accounts per entity
+   and an intercompany transfer *workflow*. It does not unblock
+   consolidation or currency conversion - the group dashboard and transfers
+   form both refuse to sum or convert across currencies rather than getting
+   it silently wrong. Ledger-backed consolidation is still Phase 3.
 
 ## Recommendations (ranked)
 
