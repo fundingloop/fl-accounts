@@ -21,6 +21,22 @@ accepted debt in [TECH_DEBT.md](TECH_DEBT.md).
 - **Storage**: private `account-invoices` bucket, zero client policies.
   Upload/download/delete flow only through server routes that re-check role
   and bill ownership before using the service-role key.
+- **Cross-app payroll boundary** (2026-07-11, migration authored, not yet
+  applied): fl-people owns the Nepal payroll system-of-record
+  (`hr_payroll_runs`/`hr_payroll_items`); fl-accounts holds
+  `payroll_run_snapshots`, an append-only finance mirror of finalised runs
+  only. No client insert/update/delete path exists - the only writer is the
+  `accounts_sync_payroll_snapshots()` SECURITY DEFINER RPC, gated on
+  `is_accounts_app_user()`, which re-sums `hr_payroll_items` and refuses to
+  snapshot a run whose header totals disagree with its line totals.
+  UPDATE/DELETE are blocked by trigger for every role, including
+  `service_role` - corrections are a deliberate manual migration, never an
+  in-place edit. Reads of fl-people data go only through
+  `accounts_finalised_payroll_runs()`, a second SECURITY DEFINER RPC also
+  gated on `is_accounts_app_user()`, which exposes finalised-run headers
+  (period + totals) only - no per-employee hr data ever crosses into
+  fl-accounts. Every snapshot insert is captured in `fl_accounts_audit_log`
+  like any other fl-accounts financial write.
 
 ## Findings register
 
@@ -48,6 +64,7 @@ action required.
 | M6 | Raw Supabase/storage error messages returned to clients from API routes (internal detail leakage). | Fixed - server routes log the real error and return generic messages. |
 | M7 | No security response headers; X-Powered-By advertised. | Fixed - nosniff, X-Frame-Options DENY, Referrer-Policy, HSTS, Permissions-Policy via next.config; poweredByHeader off. |
 | M8 | Currency change on the float account silently relabels all historical amounts (no conversion). | Mitigated - explicit confirmation dialog spelling out the consequence. Real fix (FX-aware model) is Phase-2 architecture. |
+| M9 | Payroll run history and payroll-in-forecast are built and unit-tested but not live: `payroll_run_snapshots` and its two RPCs do not exist in production until the migrations are applied. | **Manual action required: apply `20260711150000_hr_payroll_foundation.sql` then `20260711160000_payroll_run_snapshots.sql`** (fl-crm ledger, apply order matters - the second has a foreign key to the first's `hr_payroll_runs`), run each migration's post-apply verification, then confirm live at accounts.fundingloop.au that the payroll history section syncs and the dashboard note flips to "Includes payroll from finalised runs...". Until applied, the app degrades gracefully (amber banner on /payroll, "not included" note on the dashboard); the register is unaffected either way. |
 
 ### Low
 
@@ -83,3 +100,9 @@ action required.
 4. Schema changes: file-first migrations in fl-crm's ledger with pre-apply
    checks, post-apply verification and rollback SQL. Never applied
    automatically from this repo.
+5. Cross-app reads of hr payroll data (or any other sibling app's data) are
+   only ever exposed through a SECURITY DEFINER helper that gates on
+   `is_accounts_app_user()` and returns headers/aggregates only - never a
+   direct RLS grant onto the other app's tables, and never per-employee or
+   otherwise granular records. `accounts_finalised_payroll_runs()` is the
+   reference implementation.

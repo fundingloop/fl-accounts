@@ -1,8 +1,9 @@
 # fl-accounts
 
 Funding Loop's internal finance app - today: Nepal accounts payable, float
-tracking, cashflow forecasting and the SSF payroll register. Long-term: the
-company-wide finance and operations platform (see
+tracking, cashflow forecasting, the SSF payroll register and a read-only
+mirror of finalised fl-people payroll runs (payroll history + payroll in the
+forecast). Long-term: the company-wide finance and operations platform (see
 [docs/ROADMAP.md](docs/ROADMAP.md)).
 
 - **Live**: accounts.fundingloop.au (own Vercel project)
@@ -17,7 +18,7 @@ company-wide finance and operations platform (see
 ```
 npm install
 npm run dev        # http://localhost:3000
-npm test           # vitest - forecast / payroll / format maths
+npm test           # vitest - forecast / payroll / payroll snapshots / payroll forecast / format maths
 npm run lint
 npm run build
 ```
@@ -43,9 +44,12 @@ repo. Each migration carries pre-apply checks, post-apply verification and
 rollback SQL in comments. Grep the ledger before referencing any column.
 
 Tables: `float_accounts`, `bills`, `float_deposits`, `payroll_employees`,
-`fl_accounts_audit_log` (+ the `is_accounts_app_user()` /
-`rls_team_members_self_read` RLS pieces). Storage: private `account-invoices`
-bucket, server-route access only.
+`payroll_run_snapshots`, `fl_accounts_audit_log` (+ the
+`is_accounts_app_user()` / `rls_team_members_self_read` RLS pieces).
+`payroll_run_snapshots` is an append-only finance mirror of finalised
+fl-people payroll runs (`hr_payroll_runs`/`hr_payroll_items` - owned by
+fl-people, not this app) - see ARCHITECTURE.md. Storage: private
+`account-invoices` bucket, server-route access only.
 
 ## Documentation
 

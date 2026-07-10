@@ -18,15 +18,37 @@ multi-entity finance system described in
   288a9f0, first run confirmed green.
 - Baseline release tagged `accounts-platform-v1`.
 - Documentation set (this docs/ tree) established.
+- **Payroll split-ownership decision** (Kenneth, 2026-07-11): fl-people owns
+  the Nepal payroll system-of-record (`hr_payroll_runs` / `hr_payroll_items`,
+  its TDS slab engine, payslip PDFs, employee self-service); fl-accounts
+  stores only a finance-side snapshot of each finalised run. Shipped:
+  `payroll_run_snapshots` append-only mirror + `accounts_sync_payroll_snapshots()`
+  / `accounts_finalised_payroll_runs()` SECURITY DEFINER RPCs (migration
+  `20260711160000_payroll_run_snapshots.sql`, requires
+  `20260711150000_hr_payroll_foundation.sql` first - both authored in the
+  fl-crm ledger, **not yet applied**), the "Payroll run history" section on
+  `/payroll` (sync + table + CSV), and finalised payroll feeding the
+  cashflow forecast (SSF/TDS remittances + net wages, `lib/payrollForecast.js`).
+  66 tests passing. See FINANCIAL_SYSTEM_REVIEW.md and SECURITY.md for the
+  reassessed capability rows and security boundary.
 
 ## Next (Phase 2 - first platform increments)
 
 1. **Live verification** of the applied milestone at
    accounts.fundingloop.au: accounts-role sign-in, MFA enrolment, attachment
-   round-trip, audit rows landing (see SECURITY.md post-apply checks).
-2. **Payroll runs**: `payroll_runs` + `payroll_run_lines`, a "close period"
-   action, payslip history, SSF/TDS liability accrual, payroll line in the
-   cashflow forecast. (Step 2 of the migration path; highest value.)
+   round-trip, audit rows landing (see SECURITY.md post-apply checks). Now
+   also covers applying `20260711150000_hr_payroll_foundation.sql` then
+   `20260711160000_payroll_run_snapshots.sql` and running each migration's
+   post-apply verification, then confirming live at accounts.fundingloop.au:
+   the payroll history section syncs and the dashboard note flips to
+   "Includes payroll from finalised runs...".
+2. **Payroll runs** - superseded by the split-ownership decision above.
+   fl-accounts does not build its own `payroll_runs` / `payroll_run_lines`;
+   fl-people owns runs, fl-accounts mirrors finalised totals via
+   `payroll_run_snapshots` (done 2026-07-11, pending migration apply).
+   Remaining follow-on: once the two migrations are applied and
+   live-verified, revisit whether the forecast's AD-calendar remit-date
+   approximation (TECH_DEBT D11) needs tightening.
 3. **Entities and bank accounts**: `fin_entities` + `fin_bank_accounts`,
    account switcher in the UI, Nepal backfill. Unblocks the AU entity.
 4. **MFA policy decision**: whether enrollment becomes mandatory per role.

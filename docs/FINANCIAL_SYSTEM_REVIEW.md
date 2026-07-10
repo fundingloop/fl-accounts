@@ -37,12 +37,12 @@ capabilities cannot be bolted on without schema evolution.
 | Multiple legal entities | Not supported | No entity concept at all. `float_accounts.name` is the closest thing. Adding rows "works" but every page hardcodes the first account (`useFloatAccount` takes the oldest row). |
 | Multiple bank accounts | Partial (schema), No (app) | `account_id` is threaded through every table (good foresight), but the UI resolves exactly one account and has no switcher. |
 | Multiple currencies | Not safe | One currency label per account; changing it relabels history with no conversion (UI now warns). No FX rates, no per-transaction currency, no reporting currency. |
-| Payroll history / periods | Not supported | Register is current-state only. Editing a salary silently rewrites the past (the new audit journal preserves forensics, but there is no *payroll run* record, no payslip persistence, no period lock). |
-| Recurring payroll | Not supported | Payroll never feeds the cashflow forecast or bills - the forecast omits the company's largest recurring outflow. |
+| Payroll history / periods | Partial | Under the 2026-07-11 split-ownership decision, fl-people owns payroll runs and per-employee payslip history (`hr_payroll_runs`/`hr_payroll_items`). fl-accounts holds an immutable finance mirror of each finalised run's totals (`payroll_run_snapshots` - period, SSF/TDS, net, pending migration apply); the `payroll_employees` register remains current-state only and is now explicitly a reference/estimate tool, not history. |
+| Recurring payroll | Partial | Finalised payroll now projects into the cashflow forecast (`lib/payrollForecast.js`): known SSF/TDS remittances and not-yet-paid net wages from real snapshots, plus estimated future months extrapolated from the latest run. Still absent: an fl-accounts-side payroll run of record (superseded by design, not a gap - see ROADMAP). |
 | Recurring expenses | Partial | Recurring bills project occurrences client-side, but with a single `paid` flag there is no per-occurrence payment history; marking the anchor paid just advances the projection. |
 | Recurring revenue | Not supported | No revenue tables. Deposits are untyped inflows. |
 | Budgets / actual-vs-forecast | Not supported | No budget tables; forecasts are ephemeral (recomputed per page view, never persisted), so there is nothing to compare actuals against. |
-| Tax obligations / liabilities | Not supported | SSF/TDS/SST are computed for display but never accrued as liabilities with due dates; they do not appear in cashflow. |
+| Tax obligations / liabilities | Partial | For finalised runs, SSF payable and TDS now appear in the cashflow forecast with approximate remit dates (day 15/25 of the following month - an AD-calendar convention, not the exact BS-calendar statutory deadline; TECH_DEBT D11). Still not a true liabilities ledger: no due-date table, no accrual entries, SST remains display-only. |
 | Intercompany transfers | Not supported | Single-entity model; a transfer would be a deposit with a note. |
 | Audit history | Now partial | Added and applied to production 2026-07-11: `fl_accounts_audit_log` (append-only, trigger-fed, admin-read) captures every insert/update/delete on the four tables. |
 | Immutable financial history | Not supported by design | All four tables are mutated in place by any accounts-app user; deletes were hard deletes (payroll is now soft-delete; bills/deposits remain hard-delete with audit snapshots). True immutability needs a ledger design. |
@@ -80,9 +80,16 @@ capabilities cannot be bolted on without schema evolution.
    [ARCHITECTURE_RECOMMENDATIONS.md](ARCHITECTURE_RECOMMENDATIONS.md) before
    building revenue, budgets, or the AU entity onto v1 tables. Additive
    migration path, no rewrite of the running app.
-2. Introduce `payroll_runs` (+ `payroll_run_lines`) as the first evolution:
-   snapshot each period's computed payslips, accrue SSF/TDS liabilities, and
-   feed the forecast. Highest value-to-effort in the current app.
+2. **Done, 2026-07-11, in re-scoped form.** Originally: introduce
+   `payroll_runs` (+ `payroll_run_lines`) as the first evolution, snapshot
+   each period's computed payslips, accrue SSF/TDS liabilities, and feed the
+   forecast. The split-ownership decision re-scoped this: fl-people owns
+   `hr_payroll_runs`/`hr_payroll_items` and payslip persistence; fl-accounts
+   mirrors finalised totals via `payroll_run_snapshots` and feeds the
+   forecast from that mirror (`lib/payrollForecast.js`). Same outcome
+   (payroll history exists, SSF/TDS liabilities and payroll reach the
+   forecast), no duplicate system of record. Pending: applying the two
+   migrations to production.
 3. Move financial writes behind server routes (or Postgres RPCs) so
    validation, audit context and multi-step ordering are enforced server-side.
    The July 2026 remediation started this with bill deletion.

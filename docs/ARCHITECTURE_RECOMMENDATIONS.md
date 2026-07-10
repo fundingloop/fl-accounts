@@ -116,9 +116,16 @@ fl_accounts_audit_log   Already live (July 2026): row-level audit journal on
 1. `fin_entities` + `fin_bank_accounts`; backfill Nepal from float_accounts;
    add nullable `entity_id` to existing tables. App keeps reading
    float_accounts (now a compatibility view or a synced row).
-2. `payroll_runs`/`payroll_run_lines` + a "close pay period" action in the
-   payroll tab (first real consumer; immediately fixes payroll history and
-   feeds the forecast).
+2. **Superseded by the split-ownership decision (Kenneth, 2026-07-11).**
+   `payroll_runs`/`payroll_run_lines` are not built in fl-accounts: fl-people
+   owns runs and payslip history (`hr_payroll_runs`/`hr_payroll_items`), and
+   fl-accounts mirrors finalised totals via `payroll_run_snapshots`
+   (append-only, done 2026-07-11 - see ROADMAP.md and
+   FINANCIAL_SYSTEM_REVIEW.md). This already feeds the forecast
+   (`lib/payrollForecast.js`) without an fl-accounts payroll run table. The
+   future `fin_` ledger (steps 3+ below) will consume `payroll_run_snapshots`
+   to post payroll journals rather than reading from an fl-accounts-owned
+   `payroll_runs` table.
 3. Chart of accounts + journals + posting RPCs; start posting NEW bills and
    payroll runs; backfill historical paid bills as opening journals.
 4. Revenue table + CRM push (webhook/service-role route with idempotency key
